@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(timeout 8 node index.js)",
+      "Bash(node index.js)",
+      "Bash(curl -s -X POST http://localhost:3001/api/auth/login -H \"Content-Type: application/json\" -d \"{\\\\\"username\\\\\":\\\\\"xrilang\\\\\",\\\\\"password\\\\\":\\\\\"123456\\\\\"}\")",
+      "Bash(curl -s http://localhost:3001/api/health)",
+      "Bash(npm run:*)",
+      "Bash(taskkill //F //IM node.exe)",
+      "Bash(curl -s -X POST http://localhost:3001/api/auth/login -H \"Content-Type: application/json\" -d '{\"username\":\"xrilang\",\"password\":\"123456\"}')",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('OK' if d['code']==200 else 'FAIL', 'token:', d['data']['token'][:30]+'...'\\)\")",
+      "Bash(curl -s http://localhost:3001/api/health echo \"\" echo \"=== 添加测试题\\(新字段\\) ===\")",
+      "Bash(node -e ':*)",
+      "WebSearch",
+      "WebFetch(domain:tdesign.tencent.com)",
+      "Bash(sqlite3:*)",
+      "Bash(node:*)"
+    ]
+  }
+}

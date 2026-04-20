@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Database (含用户数据，不提交)
+server/database/data.db
+
+# Uploads (含用户上传文件，不提交)
+uploads/
+
+# 环境配置
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+client/dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# 参考案例
+参考案例/
+
+# Claude 本地计划
+.claude/plans/
