@@ -3,6 +3,10 @@
     <t-aside class="app-aside" width="220px">
       <div class="logo">大模型备案</div>
       <t-menu theme="light" :value="activeMenu" @change="handleMenuChange">
+        <t-menu-item value="dashboard">
+          <template #icon><t-icon name="dashboard" /></template>
+          数据统计
+        </t-menu-item>
         <t-menu-item value="blockwords">
           <template #icon><t-icon name="filter" /></template>
           拦截词管理
@@ -14,6 +18,10 @@
         <t-menu-item value="settings">
           <template #icon><t-icon name="setting" /></template>
           系统设置
+        </t-menu-item>
+        <t-menu-item value="ai-generate">
+          <template #icon><t-icon name="chat" /></template>
+          AI生成
         </t-menu-item>
       </t-menu>
     </t-aside>

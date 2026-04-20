@@ -187,4 +187,50 @@ router.delete('/skills/:id', (req, res) => {
   res.json({ code: 200, message: '删除成功' });
 });
 
+// ========== Prompt 管理 ==========
+
+router.get('/prompts', (req, res) => {
+  const list = db.prepare('SELECT * FROM ai_prompts ORDER BY sort_order ASC, id ASC').all();
+  res.json({ code: 200, data: list });
+});
+
+router.post('/prompts', (req, res) => {
+  const { name, prompt_text, description, category, enabled, sort_order } = req.body;
+  if (!name) return res.status(400).json({ code: 400, message: 'Prompt名称不能为空' });
+
+  const result = db.prepare(
+    'INSERT INTO ai_prompts (name, prompt_text, description, category, enabled, sort_order) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(name, prompt_text || '', description || '', category || '', enabled !== undefined ? Number(enabled) : 1, sort_order || 0);
+
+  res.json({ code: 200, message: '新增成功', data: { id: result.lastInsertRowid } });
+});
+
+router.put('/prompts/:id', (req, res) => {
+  const { id } = req.params;
+  const { name, prompt_text, description, category, enabled, sort_order } = req.body;
+
+  const existing = db.prepare('SELECT id FROM ai_prompts WHERE id = ?').get(id);
+  if (!existing) return res.status(404).json({ code: 404, message: 'Prompt不存在' });
+
+  const updates = [];
+  const params = [];
+  if (name !== undefined) { updates.push('name = ?'); params.push(name); }
+  if (prompt_text !== undefined) { updates.push('prompt_text = ?'); params.push(prompt_text); }
+  if (description !== undefined) { updates.push('description = ?'); params.push(description); }
+  if (category !== undefined) { updates.push('category = ?'); params.push(category); }
+  if (enabled !== undefined) { updates.push('enabled = ?'); params.push(Number(enabled)); }
+  if (sort_order !== undefined) { updates.push('sort_order = ?'); params.push(Number(sort_order)); }
+  updates.push('updated_at = CURRENT_TIMESTAMP');
+
+  params.push(id);
+  db.prepare(`UPDATE ai_prompts SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  res.json({ code: 200, message: '更新成功' });
+});
+
+router.delete('/prompts/:id', (req, res) => {
+  const { id } = req.params;
+  db.prepare('DELETE FROM ai_prompts WHERE id = ?').run(id);
+  res.json({ code: 200, message: '删除成功' });
+});
+
 module.exports = router;

@@ -5,6 +5,16 @@
     <!-- 搜索栏 -->
     <div class="search-bar">
       <t-input v-model="search.keyword" placeholder="题目/类别/模型回答" style="width: 220px" @enter="loadData" />
+      <t-select v-model="search.type" placeholder="类型" clearable filterable style="width: 160px">
+        <t-option v-for="t in typeOptions" :key="t" :value="t" :label="t" />
+      </t-select>
+      <t-select v-model="search.category" placeholder="类别" clearable filterable style="width: 160px">
+        <t-option v-for="c in categoryOptions" :key="c" :value="c" :label="c" />
+      </t-select>
+      <t-select v-model="search.is_answered" placeholder="是否回答" clearable style="width: 140px">
+        <t-option value="0" label="未回答" />
+        <t-option value="1" label="已回答" />
+      </t-select>
       <t-select v-model="search.is_refused" placeholder="是否拒答" clearable style="width: 140px">
         <t-option value="0" label="未拒答" />
         <t-option value="1" label="已拒答" />
@@ -32,9 +42,21 @@
         <template #icon><t-icon name="download" /></template>
         导出
       </t-button>
+      <t-button variant="outline" @click="showDuplicateDialog" :loading="duplicateLoading">
+        <template #icon><t-icon name="scan" /></template>
+        重复检测
+      </t-button>
       <t-button v-if="selectedRows.length" theme="danger" variant="outline" @click="handleBatchDelete">
         <template #icon><t-icon name="delete" /></template>
         批量删除 ({{ selectedRows.length }})
+      </t-button>
+      <t-button v-if="selectedRows.length" variant="outline" @click="showBatchTypeDialog">
+        <template #icon><t-icon name="edit" /></template>
+        批量设置类型 ({{ selectedRows.length }})
+      </t-button>
+      <t-button v-if="selectedRows.length" variant="outline" @click="showBatchCategoryDialog">
+        <template #icon><t-icon name="edit" /></template>
+        批量设置类别 ({{ selectedRows.length }})
       </t-button>
 
       <!-- 拒答比例（右侧） -->
@@ -68,6 +90,11 @@
       >
       <template #index="{ row }">{{ row.index }}</template>
       <template #type="{ row }">{{ row.type || '-' }}</template>
+      <template #is_answered="{ row }">
+        <t-tag :theme="row.is_answered === 1 ? 'success' : 'default'" variant="outline">
+          {{ row.is_answered === 1 ? '是' : '否' }}
+        </t-tag>
+      </template>
       <template #is_refused="{ row }">
         <t-tag :theme="row.is_refused === 1 ? 'danger' : 'success'" variant="outline">
           {{ row.is_refused === 1 ? '是' : '否' }}
@@ -82,6 +109,9 @@
         <span v-else style="color: #bbb">-</span>
       </template>
       <template #action="{ row }">
+        <t-button variant="text" size="small" theme="primary" @click="handleAIAnswer(row)" :loading="aiAnswerLoading[row.id]">AI回答</t-button>
+        <t-button v-if="!isUserApproved(row)" variant="text" size="small" theme="success" @click="handleApprove(row)">同意</t-button>
+        <t-button v-else variant="text" size="small" theme="warning" @click="handleRevokeApprove(row)">撤销同意</t-button>
         <t-button variant="text" size="small" @click="handleEdit(row)">编辑</t-button>
         <t-button variant="text" size="small" theme="danger" @click="handleDelete(row)">删除</t-button>
       </template>
@@ -267,6 +297,89 @@
         </t-form-item>
       </t-form>
     </t-dialog>
+
+    <!-- AI回答弹窗 -->
+    <t-dialog v-model:visible="aiAnswerDialogVisible" header="AI回答" :footer="false" width="700px">
+      <t-space direction="vertical" style="width: 100%" :size="16">
+        <div v-if="aiAnswerData.old_answer" class="ai-section">
+          <h4 style="margin-bottom: 8px">已有回答</h4>
+          <div class="ai-answer-box">{{ aiAnswerData.old_answer }}</div>
+        </div>
+        <div class="ai-section">
+          <h4 style="margin-bottom: 8px">AI生成回答</h4>
+          <div class="ai-answer-box ai-answer-new">{{ aiAnswerData.ai_answer || '生成中...' }}</div>
+        </div>
+        <div style="text-align: right">
+          <t-button variant="outline" @click="aiAnswerDialogVisible = false">关闭</t-button>
+          <t-button theme="primary" style="margin-left: 12px" @click="handleReplaceAnswer" :disabled="!aiAnswerData.ai_answer">一键替换</t-button>
+        </div>
+      </t-space>
+    </t-dialog>
+
+    <!-- 批量设置类型弹窗 -->
+    <t-dialog v-model:visible="batchTypeDialogVisible" header="批量设置类型" :footer="false" width="500px">
+      <t-form :data="batchTypeForm" @submit="handleBatchTypeSubmit" label-width="100px">
+        <t-form-item label="已选记录">
+          <t-tag theme="primary">{{ selectedRows.length }} 条</t-tag>
+        </t-form-item>
+        <t-form-item label="设置类型" name="type">
+          <t-input v-model="batchTypeForm.type" placeholder="输入类型，如：文本生成、图像生成" />
+        </t-form-item>
+        <t-form-item>
+          <t-button type="submit" theme="primary">确认设置</t-button>
+          <t-button variant="outline" @click="batchTypeDialogVisible = false" style="margin-left: 12px">取消</t-button>
+        </t-form-item>
+      </t-form>
+    </t-dialog>
+
+    <!-- 批量设置类别弹窗 -->
+    <t-dialog v-model:visible="batchCategoryDialogVisible" header="批量设置类别" :footer="false" width="500px">
+      <t-form :data="batchCategoryForm" @submit="handleBatchCategorySubmit" label-width="100px">
+        <t-form-item label="已选记录">
+          <t-tag theme="primary">{{ selectedRows.length }} 条</t-tag>
+        </t-form-item>
+        <t-form-item label="设置类别" name="category">
+          <t-input v-model="batchCategoryForm.category" placeholder="输入类别" />
+        </t-form-item>
+        <t-form-item>
+          <t-button type="submit" theme="primary">确认设置</t-button>
+          <t-button variant="outline" @click="batchCategoryDialogVisible = false" style="margin-left: 12px">取消</t-button>
+        </t-form-item>
+      </t-form>
+    </t-dialog>
+
+    <!-- 重复检测弹窗 -->
+    <t-dialog v-model:visible="duplicateDialogVisible" header="重复检测" width="800px" :footer="false">
+      <t-space direction="vertical" style="width: 100%" :size="16">
+        <t-alert v-if="duplicateData.length === 0" theme="success">未检测到重复题目</t-alert>
+        <template v-else>
+          <t-alert theme="warning">检测到 {{ duplicateData.length }} 组重复题目，共 {{ duplicateTotalExtra }} 条多余记录</t-alert>
+          <div v-for="(group, gi) in duplicateData" :key="gi" class="dup-group">
+            <div class="dup-header">
+              <t-tag theme="danger" variant="light" size="small">{{ group.count }}条重复</t-tag>
+              <span class="dup-question">{{ group.question }}</span>
+            </div>
+            <t-table :data="group.items" row-key="id" size="small" :max-height="200">
+              <t-table-column colKey="id" title="ID" width="60" />
+              <t-table-column colKey="category" title="类别" width="100" />
+              <t-table-column colKey="model_answer" title="模型回答" ellipsis />
+              <t-table-column colKey="created_at" title="创建时间" width="160" />
+              <t-table-column colKey="action" title="保留" width="60">
+                <template #action="{ row }">
+                  <t-radio :checked="keepIds[group.question] === row.id" @change="keepIds[group.question] = row.id" />
+                </template>
+              </t-table-column>
+            </t-table>
+          </div>
+          <div style="text-align: right">
+            <t-button variant="outline" @click="duplicateDialogVisible = false">关闭</t-button>
+            <t-button theme="danger" style="margin-left: 12px" @click="handleRemoveDuplicates" :loading="duplicateRemoving">
+              一键删除多余重复（{{ duplicateTotalExtra }}条）
+            </t-button>
+          </div>
+        </template>
+      </t-space>
+    </t-dialog>
   </div>
 </template>
 
@@ -277,6 +390,9 @@ import { questionsAPI } from '@/api';
 
 const search = reactive({
   keyword: '',
+  no_type: '',
+  no_category: '',
+  is_answered: '',
   is_refused: '',
   audit_count: '',
   audit_names: '',
@@ -313,8 +429,17 @@ const systemFields = [
   { value: 'is_answered', label: '是否回答(0/1)' },
   { value: 'is_refused', label: '是否拒答(0/1)' },
   { value: 'remark', label: '备注' },
+  { value: 'creator_id', label: '创建人(用户名)' },
 ];
 const defaultValues = ref({ is_answered: '-1', is_refused: '0' });
+
+// 批量设置类型
+const batchTypeDialogVisible = ref(false);
+const batchTypeForm = reactive({ type: '' });
+
+// 批量设置类别
+const batchCategoryDialogVisible = ref(false);
+const batchCategoryForm = reactive({ category: '' });
 
 const currentSheetData = computed(() => {
   if (!selectedSheet.value || !importSheets.value.length) return null;
@@ -336,7 +461,7 @@ const exporting = ref(false);
 
 const exportDefaultLabels = {
   index: '序号', question: '题目', type: '类型', category: '类别', model_answer: '模型回答',
-  is_refused: '是否拒答', remark: '备注', audit_results: '审核结果',
+  is_answered: '是否回答', is_refused: '是否拒答', remark: '备注', audit_results: '审核结果',
   creator_id: '创建人', updater_id: '更新人', created_at: '创建时间', updated_at: '更新时间',
 };
 
@@ -346,6 +471,7 @@ const exportColumnOptions = [
   { value: 'type', label: '类型' },
   { value: 'category', label: '类别' },
   { value: 'model_answer', label: '模型回答' },
+  { value: 'is_answered', label: '是否回答' },
   { value: 'is_refused', label: '是否拒答' },
   { value: 'remark', label: '备注' },
   { value: 'audit_results', label: '审核结果' },
@@ -368,12 +494,13 @@ const allColumnDefs = [
   { colKey: 'question', title: '题目', width: 300 },
   { colKey: 'category', title: '类别', width: 120 },
   { colKey: 'model_answer', title: '模型回答', width: 300 },
+  { colKey: 'is_answered', title: '是否回答', slot: 'is_answered', width: 90 },
   { colKey: 'is_refused', title: '是否拒答', slot: 'is_refused', width: 90 },
   { colKey: 'remark', title: '备注', width: 150 },
   { colKey: 'audit_results', title: '人工审核结果', slot: 'audit_results', width: 200 },
   { colKey: 'created_at', title: '创建时间', width: 160 },
   { colKey: 'updated_at', title: '更新时间', width: 160 },
-  { colKey: 'action', title: '操作', width: 130, slot: 'action', fixed: 'right', required: true },
+  { colKey: 'action', title: '操作', width: 280, slot: 'action', fixed: 'right', required: true },
 ];
 
 // 列可见性
@@ -414,12 +541,131 @@ const handleColumnResizeChange = (params) => {
 
 const user = JSON.parse(localStorage.getItem('user') || '{}');
 
+// AI回答
+const aiAnswerDialogVisible = ref(false);
+const aiAnswerLoading = ref({});
+const aiAnswerData = ref({ ai_answer: '', old_answer: '' });
+const aiAnswerRowId = ref(null);
+
+const handleAIAnswer = async (row) => {
+  aiAnswerRowId.value = row.id;
+  aiAnswerData.value = { ai_answer: '', old_answer: row.model_answer || '' };
+  aiAnswerDialogVisible.value = true;
+  aiAnswerLoading.value[row.id] = true;
+  try {
+    const res = await questionsAPI.aiAnswer(row.id);
+    aiAnswerData.value = res.data;
+  } catch (e) {
+    MessagePlugin.error(e?.response?.data?.message || 'AI调用失败');
+    aiAnswerDialogVisible.value = false;
+  } finally {
+    aiAnswerLoading.value[row.id] = false;
+  }
+};
+
+const handleReplaceAnswer = async () => {
+  if (!aiAnswerRowId.value || !aiAnswerData.value.ai_answer) return;
+  try {
+    await questionsAPI.update(aiAnswerRowId.value, {
+      model_answer: aiAnswerData.value.ai_answer,
+      updater_id: user.id,
+    });
+    MessagePlugin.success('替换成功');
+    aiAnswerDialogVisible.value = false;
+    loadData();
+  } catch {}
+};
+
+// 同意/撤销同意
+const isUserApproved = (row) => {
+  return (row.audit_results || []).some((a) => a.username === user.username);
+};
+
+const handleApprove = async (row) => {
+  try {
+    await questionsAPI.approve(row.id, user.username);
+    MessagePlugin.success('已同意');
+    loadData();
+  } catch {}
+};
+
+const handleRevokeApprove = async (row) => {
+  try {
+    await questionsAPI.revokeApprove(row.id, user.username);
+    MessagePlugin.success('已撤销同意');
+    loadData();
+  } catch {}
+};
+
+// 重复检测
+const duplicateDialogVisible = ref(false);
+const duplicateLoading = ref(false);
+const duplicateRemoving = ref(false);
+const duplicateData = ref([]);
+const keepIds = ref({});
+
+const duplicateTotalExtra = computed(() => {
+  return duplicateData.value.reduce((sum, g) => sum + g.count - 1, 0);
+});
+
+const showDuplicateDialog = async () => {
+  duplicateLoading.value = true;
+  duplicateDialogVisible.value = true;
+  try {
+    const res = await questionsAPI.getDuplicates();
+    duplicateData.value = res.data || [];
+    // 默认每组保留最早（id最小）的记录
+    const ids = {};
+    duplicateData.value.forEach((g) => {
+      ids[g.question] = Math.min(...g.items.map((item) => item.id));
+    });
+    keepIds.value = ids;
+  } catch {} finally {
+    duplicateLoading.value = false;
+  }
+};
+
+const handleRemoveDuplicates = async () => {
+  const deleteIds = [];
+  duplicateData.value.forEach((g) => {
+    const keepId = keepIds.value[g.question];
+    g.items.forEach((item) => {
+      if (item.id !== keepId) deleteIds.push(item.id);
+    });
+  });
+  if (deleteIds.length === 0) {
+    MessagePlugin.info('没有需要删除的记录');
+    return;
+  }
+
+  DialogPlugin.confirm({
+    header: '确认删除',
+    body: `确定删除 ${deleteIds.length} 条重复记录吗？每组将保留选中的那条。`,
+    theme: 'warning',
+    confirmBtn: { content: '确认删除', theme: 'danger' },
+    onConfirm: async () => {
+      duplicateRemoving.value = true;
+      try {
+        await questionsAPI.removeDuplicates(deleteIds);
+        MessagePlugin.success(`成功删除 ${deleteIds.length} 条重复记录`);
+        duplicateDialogVisible.value = false;
+        loadData();
+      } catch {} finally {
+        duplicateRemoving.value = false;
+      }
+    },
+  });
+};
+
 const loadData = async () => {
   const params = {
     keyword: search.keyword,
     page: pagination.page,
     pageSize: pagination.pageSize,
   };
+  if (search.no_type) params.no_type = search.no_type;
+  if (search.no_category) params.no_category = search.no_category;
+  if (search.is_answered) params.is_answered = search.is_answered;
   if (search.is_refused) params.is_refused = search.is_refused;
   if (search.audit_count) params.audit_count = search.audit_count;
   if (search.audit_names) params.audit_names = search.audit_names;
@@ -434,6 +680,9 @@ const loadData = async () => {
 
 const resetSearch = () => {
   search.keyword = '';
+  search.no_type = '';
+  search.no_category = '';
+  search.is_answered = '';
   search.is_refused = '';
   search.audit_count = '';
   search.audit_names = '';
@@ -530,6 +779,48 @@ const handleBatchDelete = () => {
     },
     onClose: () => dialog.destroy(),
   });
+};
+
+// 批量设置类型
+const showBatchTypeDialog = () => {
+  batchTypeForm.type = '';
+  batchTypeDialogVisible.value = true;
+};
+
+const handleBatchTypeSubmit = async () => {
+  if (!batchTypeForm.type.trim()) {
+    MessagePlugin.warning('请输入类型');
+    return;
+  }
+  try {
+    await questionsAPI.batchUpdateType({ ids: selectedRows.value, type: batchTypeForm.type });
+    MessagePlugin.success('批量设置类型成功');
+    batchTypeDialogVisible.value = false;
+    loadData();
+  } catch (e) {
+    MessagePlugin.error('设置失败');
+  }
+};
+
+// 批量设置类别
+const showBatchCategoryDialog = () => {
+  batchCategoryForm.category = '';
+  batchCategoryDialogVisible.value = true;
+};
+
+const handleBatchCategorySubmit = async () => {
+  if (!batchCategoryForm.category.trim()) {
+    MessagePlugin.warning('请输入类别');
+    return;
+  }
+  try {
+    await questionsAPI.batchUpdateCategory({ ids: selectedRows.value, category: batchCategoryForm.category });
+    MessagePlugin.success('批量设置类别成功');
+    batchCategoryDialogVisible.value = false;
+    loadData();
+  } catch (e) {
+    MessagePlugin.error('设置失败');
+  }
 };
 
 // 导入
@@ -671,6 +962,7 @@ const handleExport = async () => {
     }));
     const params = { columns, format: exportFormat.value };
     if (search.keyword) params.keyword = search.keyword;
+    if (search.is_answered) params.is_answered = search.is_answered;
     if (search.is_refused) params.is_refused = search.is_refused;
     if (search.audit_count) params.audit_count = search.audit_count;
     if (search.audit_names) params.audit_names = search.audit_names;
@@ -721,4 +1013,10 @@ onMounted(loadData);
 .column-settings { padding: 12px 16px; width: 200px; }
 .column-settings h4 { margin-bottom: 10px; font-size: 14px; font-weight: 500; }
 .column-settings .t-checkbox { display: block; margin-bottom: 6px; }
+.ai-section h4 { font-size: 14px; font-weight: 500; color: #333; }
+.ai-answer-box { padding: 12px; background: #f5f5f5; border-radius: 6px; white-space: pre-wrap; max-height: 300px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
+.ai-answer-new { background: #e6f7ff; border: 1px solid #91d5ff; }
+.dup-group { border: 1px solid #e7e7e7; border-radius: 6px; padding: 12px; }
+.dup-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.dup-question { font-weight: 500; font-size: 14px; color: #333; }
 </style>

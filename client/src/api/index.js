@@ -19,9 +19,24 @@ export const questionsAPI = {
   update: (id, data) => request.put(`/questions/${id}`, data),
   delete: (id) => request.delete(`/questions/${id}`),
   batchDelete: (data) => request.post('/questions/batch-delete', data),
+  batchUpdateType: (data) => request.post('/questions/batch-update-type', data),
+  batchUpdateCategory: (data) => request.post('/questions/batch-update-category', data),
   export: (data) => request.post('/questions/export', data, { responseType: 'blob' }),
   importFile: (formData) => request.post('/questions/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
   importPreview: (formData) => request.post('/questions/import/preview', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  aiAnswer: (id) => request.post(`/questions/${id}/ai-answer`),
+  approve: (id, username) => request.post(`/questions/${id}/approve`, { username }),
+  revokeApprove: (id, username) => request.post(`/questions/${id}/revoke-approve`, { username }),
+  getDuplicates: () => request.get('/questions/duplicates'),
+  removeDuplicates: (ids) => request.post('/questions/remove-duplicates', { ids }),
+  getTypes: () => request.get('/questions/types'),
+  getCategories: () => request.get('/questions/categories'),
+};
+
+export const statsAPI = {
+  categoryDistribution: () => request.get('/stats/category-distribution'),
+  questionWordcloud: () => request.get('/stats/question-wordcloud'),
+  answerWordcloud: () => request.get('/stats/answer-wordcloud'),
 };
 
 export const aiConfigAPI = {
@@ -37,4 +52,14 @@ export const aiConfigAPI = {
   createSkill: (data) => request.post('/ai-config/skills', data),
   updateSkill: (id, data) => request.put(`/ai-config/skills/${id}`, data),
   deleteSkill: (id) => request.delete(`/ai-config/skills/${id}`),
+  getPrompts: () => request.get('/ai-config/prompts'),
+  createPrompt: (data) => request.post('/ai-config/prompts', data),
+  updatePrompt: (id, data) => request.put(`/ai-config/prompts/${id}`, data),
+  deletePrompt: (id) => request.delete(`/ai-config/prompts/${id}`),
+};
+
+export const aiGenerateAPI = {
+  generate: (data) => request.post('/ai-generate/generate', data),
+  checkDuplicate: (data) => request.post('/ai-generate/check-duplicate', data),
+  save: (data) => request.post('/ai-generate/save', data),
 };

@@ -1,20 +1,24 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
 import Login from '../views/Login.vue';
 import Layout from '../views/Layout.vue';
+import Dashboard from '../views/Dashboard.vue';
 import Blockwords from '../views/Blockwords.vue';
 import Questions from '../views/Questions.vue';
 import AIConfig from '../views/AIConfig.vue';
+import AIGenerate from '../views/AIGenerate.vue';
 
 const routes = [
   { path: '/login', component: Login },
   {
     path: '/',
     component: Layout,
-    redirect: '/blockwords',
+    redirect: '/dashboard',
     children: [
+      { path: 'dashboard', component: Dashboard },
       { path: 'blockwords', component: Blockwords },
       { path: 'questions', component: Questions },
       { path: 'settings', component: AIConfig },
+      { path: 'ai-generate', component: AIGenerate },
     ],
   },
 ];

@@ -18,6 +18,8 @@ router.get('/', (req, res) => {
   const {
     keyword,
     type,          // 类型模糊搜索
+    no_type,       // 筛选未设置类型 1=是
+    no_category,   // 筛选未设置类别 1=是
     is_answered,   // -1=全部, 0=未回答, 1=已回答
     is_refused,     // -1=全部, 0=未拒答, 1=已拒答
     audit_count,    // 人工审核同意数筛选
@@ -37,6 +39,12 @@ router.get('/', (req, res) => {
   if (type) {
     conditions.push('q.type LIKE ?');
     params.push(`%${type}%`);
+  }
+  if (no_type === '1') {
+    conditions.push('(q.type IS NULL OR q.type = "")');
+  }
+  if (no_category === '1') {
+    conditions.push('(q.category IS NULL OR q.category = "")');
   }
   if (is_answered !== undefined && is_answered !== '-1' && is_answered !== '') {
     conditions.push('q.is_answered = ?');
@@ -89,6 +97,18 @@ router.get('/', (req, res) => {
       pageSize: Number(pageSize),
     },
   });
+});
+
+// 获取类型列表
+router.get('/types', (req, res) => {
+  const rows = db.prepare('SELECT DISTINCT type FROM questions WHERE type IS NOT NULL AND type != "" ORDER BY type').all();
+  res.json({ code: 200, data: rows.map((r) => r.type) });
+});
+
+// 获取类别列表
+router.get('/categories', (req, res) => {
+  const rows = db.prepare('SELECT DISTINCT category FROM questions WHERE category IS NOT NULL AND category != "" ORDER BY category').all();
+  res.json({ code: 200, data: rows.map((r) => r.category) });
 });
 
 // 新增
@@ -184,6 +204,206 @@ router.post('/batch-delete', (req, res) => {
 
   deleteMany(ids);
   res.json({ code: 200, message: `成功删除 ${ids.length} 条记录` });
+});
+
+// 批量更新类型
+router.post('/batch-update-type', (req, res) => {
+  const { ids, type } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ code: 400, message: '请选择要更新的记录' });
+  }
+
+  const updateStmt = db.prepare('UPDATE questions SET type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+  const updateMany = db.transaction((idList) => {
+    for (const id of idList) {
+      updateStmt.run(type, id);
+    }
+  });
+
+  updateMany(ids);
+  res.json({ code: 200, message: `成功更新 ${ids.length} 条记录的类型` });
+});
+
+// 批量更新类别
+router.post('/batch-update-category', (req, res) => {
+  const { ids, category } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ code: 400, message: '请选择要更新的记录' });
+  }
+
+  const updateStmt = db.prepare('UPDATE questions SET category = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+  const updateMany = db.transaction((idList) => {
+    for (const id of idList) {
+      updateStmt.run(category, id);
+    }
+  });
+
+  updateMany(ids);
+  res.json({ code: 200, message: `成功更新 ${ids.length} 条记录的类别` });
+});
+
+// AI回答：根据活跃AI配置调用模型生成回答
+router.post('/:id/ai-answer', async (req, res) => {
+  const { id } = req.params;
+  const row = db.prepare('SELECT * FROM questions WHERE id = ?').get(id);
+  if (!row) return res.status(404).json({ code: 404, message: '记录不存在' });
+
+  const aiConfig = db.prepare('SELECT * FROM ai_config WHERE is_active = 1 LIMIT 1').get();
+  if (!aiConfig || !aiConfig.api_base_url || !aiConfig.api_key) {
+    return res.status(400).json({ code: 400, message: '请先配置AI渠道' });
+  }
+
+  // 构建提示词
+  const skills = db.prepare("SELECT * FROM ai_skills WHERE enabled = 1 ORDER BY sort_order ASC").all();
+  const skillText = skills.map((s) => s.content).filter(Boolean).join('\n');
+  let prompt = row.question;
+  if (aiConfig.agent_prompt) prompt = aiConfig.agent_prompt + '\n' + prompt;
+  if (aiConfig.rules) prompt += '\n规则：' + aiConfig.rules;
+  if (skillText) prompt += '\n技能：' + skillText;
+
+  const baseUrl = aiConfig.api_base_url.replace(/\/+$/, '');
+
+  try {
+    let aiAnswer = '';
+
+    if (aiConfig.protocol === 'gemini') {
+      const resp = await fetch(`${baseUrl}/models/${aiConfig.model}:generateContent?key=${aiConfig.api_key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+        signal: AbortSignal.timeout(60000),
+      });
+      const data = await resp.json();
+      aiAnswer = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    } else if (aiConfig.protocol === 'claude') {
+      const resp = await fetch(`${baseUrl}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': aiConfig.api_key,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: aiConfig.model,
+          max_tokens: 4096,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+      const data = await resp.json();
+      aiAnswer = data.content?.[0]?.text || '';
+    } else {
+      // OpenAI / Codex 兼容
+      const resp = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${aiConfig.api_key}`,
+        },
+        body: JSON.stringify({
+          model: aiConfig.model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 4096,
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+      const data = await resp.json();
+      aiAnswer = data.choices?.[0]?.message?.content || '';
+    }
+
+    if (!aiAnswer) {
+      return res.status(500).json({ code: 500, message: '模型返回为空' });
+    }
+
+    res.json({ code: 200, data: { ai_answer: aiAnswer, old_answer: row.model_answer || '' } });
+  } catch (err) {
+    res.status(500).json({ code: 500, message: 'AI调用失败: ' + err.message });
+  }
+});
+
+// 同意审核
+router.post('/:id/approve', (req, res) => {
+  const { id } = req.params;
+  const { username } = req.body;
+  if (!username) return res.status(400).json({ code: 400, message: '缺少用户名' });
+
+  const row = db.prepare('SELECT audit_results FROM questions WHERE id = ?').get(id);
+  if (!row) return res.status(404).json({ code: 404, message: '记录不存在' });
+
+  let auditResults = row.audit_results ? JSON.parse(row.audit_results) : [];
+  if (auditResults.some((a) => a.username === username)) {
+    return res.status(400).json({ code: 400, message: '已同意，请勿重复操作' });
+  }
+
+  // 查询用户昵称
+  const user = db.prepare('SELECT nickname FROM users WHERE username = ?').get(username);
+  auditResults.push({ username, name: user ? user.nickname : username });
+
+  db.prepare('UPDATE questions SET audit_results = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(JSON.stringify(auditResults), id);
+
+  res.json({ code: 200, message: '已同意', data: { audit_results: auditResults } });
+});
+
+// 撤销同意
+router.post('/:id/revoke-approve', (req, res) => {
+  const { id } = req.params;
+  const { username } = req.body;
+  if (!username) return res.status(400).json({ code: 400, message: '缺少用户名' });
+
+  const row = db.prepare('SELECT audit_results FROM questions WHERE id = ?').get(id);
+  if (!row) return res.status(404).json({ code: 404, message: '记录不存在' });
+
+  let auditResults = row.audit_results ? JSON.parse(row.audit_results) : [];
+  auditResults = auditResults.filter((a) => a.username !== username);
+
+  db.prepare('UPDATE questions SET audit_results = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(JSON.stringify(auditResults), id);
+
+  res.json({ code: 200, message: '已撤销同意', data: { audit_results: auditResults } });
+});
+
+// 重复检测
+router.get('/duplicates', (req, res) => {
+  const rows = db.prepare(
+    `SELECT id, question, category, type, model_answer, is_refused, audit_results, created_at
+     FROM questions WHERE question IN (
+       SELECT question FROM questions GROUP BY question HAVING COUNT(*) > 1
+     ) ORDER BY question, id ASC`
+  ).all();
+
+  const groups = {};
+  rows.forEach((r) => {
+    if (!groups[r.question]) groups[r.question] = [];
+    groups[r.question].push({
+      ...r,
+      audit_results: r.audit_results ? JSON.parse(r.audit_results) : [],
+    });
+  });
+
+  const result = Object.entries(groups).map(([question, items]) => ({
+    question,
+    count: items.length,
+    items,
+  }));
+
+  res.json({ code: 200, data: result });
+});
+
+// 删除重复（每组保留id最小的记录）
+router.post('/remove-duplicates', (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ code: 400, message: '请选择要删除的记录' });
+  }
+
+  const deleteStmt = db.prepare('DELETE FROM questions WHERE id = ?');
+  const deleteMany = db.transaction((idList) => {
+    for (const id of idList) deleteStmt.run(id);
+  });
+  deleteMany(ids);
+
+  res.json({ code: 200, message: `成功删除 ${ids.length} 条重复记录` });
 });
 
 // 导出
