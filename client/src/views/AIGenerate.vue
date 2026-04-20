@@ -56,7 +56,7 @@
           <t-form-item>
             <t-button theme="primary" :loading="generating" @click="handleGenerate">
               <template #icon><t-icon name="chat" /></template>
-              生成题目
+              {{ generating ? `生成中 (${generatingProgress.current}/${generatingProgress.total})` : '生成题目' }}
             </t-button>
           </t-form-item>
         </t-form>
@@ -204,6 +204,8 @@ const generating = ref(false);
 const selectedRows = ref([]);
 const checkingDuplicate = ref(false);
 const regeneratingAnswer = ref({});
+const generatingProgress = ref({ current: 0, total: 0 });
+let ws = null;
 
 // 编辑
 const editDialogVisible = ref(false);
@@ -267,9 +269,25 @@ const handleGenerate = async () => {
     MessagePlugin.warning('生成数量至少为1');
     return;
   }
+
+  // 清理之前的 WebSocket 连接
+  if (ws) {
+    ws.close();
+    ws = null;
+  }
+
   generating.value = true;
-  try {
-    const res = await aiGenerateAPI.generate({
+  generatingProgress.value = { current: 0, total: config.count };
+  results.value = [];
+
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsHost = window.location.host;
+  const wsUrl = `${wsProtocol}//${wsHost}/ws/generate`;
+
+  ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({
       count: config.count,
       type: config.type,
       category: config.category,
@@ -277,22 +295,48 @@ const handleGenerate = async () => {
       skills: config.skills,
       prompt: config.prompt,
       ai_config_id: config.ai_config_id,
-    });
-
-    const newResults = res.data.map((item, idx) => ({
-      ...item,
-      index: results.value.length + idx + 1,
-      is_duplicate: false,
     }));
+  };
 
-    results.value = [...results.value, ...newResults];
-    MessagePlugin.success(res.message || '生成成功');
-  } catch (e) {
-    const errMsg = e?.response?.data?.message || e?.message || '生成失败';
-    MessagePlugin.error(errMsg);
-  } finally {
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+
+      if (data.type === 'progress') {
+        generatingProgress.value = { current: data.current, total: data.total };
+
+        const newItem = {
+          ...data.item,
+          index: results.value.length + 1,
+          is_duplicate: false,
+        };
+        results.value = [...results.value, newItem];
+      } else if (data.type === 'complete') {
+        generating.value = false;
+        ws.close();
+        ws = null;
+        MessagePlugin.success(`成功生成${data.total}条`);
+      } else if (data.type === 'error') {
+        generating.value = false;
+        ws.close();
+        ws = null;
+        MessagePlugin.error(data.message);
+      }
+    } catch (e) {
+      console.error('解析 WebSocket 消息失败:', e);
+    }
+  };
+
+  ws.onerror = (error) => {
+    console.error('WebSocket 错误:', error);
     generating.value = false;
-  }
+    MessagePlugin.error('WebSocket 连接错误');
+  };
+
+  ws.onclose = () => {
+    generating.value = false;
+    generatingProgress.value = { current: 0, total: 0 };
+  };
 };
 
 // 编辑
@@ -370,13 +414,23 @@ const handleUseNewAnswer = () => {
 
 // 删除
 const handleDelete = (row) => {
-  const idx = results.value.findIndex(r => r.index === row.index);
-  if (idx > -1) {
-    results.value.splice(idx, 1);
-    // 重新编号
-    results.value.forEach((r, i) => r.index = i + 1);
-    results.value = [...results.value];
-  }
+  const dialog = DialogPlugin.confirm({
+    header: '确认删除',
+    body: '确定删除该条记录吗？',
+    theme: 'warning',
+    confirmBtn: { content: '确认', theme: 'danger' },
+    onConfirm: () => {
+      const idx = results.value.findIndex(r => r.index === row.index);
+      if (idx > -1) {
+        results.value.splice(idx, 1);
+        results.value.forEach((r, i) => r.index = i + 1);
+        results.value = [...results.value];
+      }
+      dialog.destroy();
+      MessagePlugin.success('删除成功');
+    },
+    onClose: () => dialog.destroy(),
+  });
 };
 
 // 批量删除
