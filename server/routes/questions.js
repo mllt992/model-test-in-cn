@@ -35,13 +35,13 @@ router.get('/', (req, res) => {
     conditions.push('(q.question LIKE ? OR q.category LIKE ? OR q.model_answer LIKE ?)');
     params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
   }
-  if (type) {
+  if (type && type.trim()) {
     conditions.push('q.type = ?');
-    params.push(type);
+    params.push(type.trim());
   }
-  if (category) {
+  if (category && category.trim()) {
     conditions.push('q.category = ?');
-    params.push(category);
+    params.push(category.trim());
   }
   if (is_answered !== undefined && is_answered !== '-1' && is_answered !== '') {
     conditions.push('q.is_answered = ?');
@@ -98,13 +98,23 @@ router.get('/', (req, res) => {
 
 // 获取类型列表
 router.get('/types', (req, res) => {
-  const rows = db.prepare('SELECT DISTINCT type FROM questions WHERE type IS NOT NULL AND type != "" ORDER BY type').all();
+  // 检查 type 列是否存在
+  let rows = [];
+  try {
+    rows = db.prepare("SELECT DISTINCT type FROM questions WHERE type IS NOT NULL AND type != '' ORDER BY type").all();
+  } catch (e) {
+    // 列不存在，返回空数组
+    if (e.message.includes('no such column')) {
+      return res.json({ code: 200, data: [] });
+    }
+    throw e;
+  }
   res.json({ code: 200, data: rows.map((r) => r.type) });
 });
 
 // 获取类别列表
 router.get('/categories', (req, res) => {
-  const rows = db.prepare('SELECT DISTINCT category FROM questions WHERE category IS NOT NULL AND category != "" ORDER BY category').all();
+  const rows = db.prepare("SELECT DISTINCT category FROM questions WHERE category IS NOT NULL AND category != '' ORDER BY category").all();
   res.json({ code: 200, data: rows.map((r) => r.category) });
 });
 
