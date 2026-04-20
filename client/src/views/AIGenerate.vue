@@ -374,14 +374,18 @@ const handleRegenerateAnswer = async (row) => {
     index: row.index - 1,
     question: row.question,
     oldAnswer: row.answer || '',
-    newAnswer: '',
+    newAnswer: '生成中...',
   };
   regenerateDialogVisible.value = true;
   regeneratingAnswer.value[row.index] = true;
 
-  try {
-    // 调用AI生成回答
-    const res = await aiGenerateAPI.generate({
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${wsProtocol}//${window.location.host}/ws/generate`;
+
+  const regWs = new WebSocket(wsUrl);
+
+  regWs.onopen = () => {
+    regWs.send(JSON.stringify({
       count: 1,
       type: row.type || config.type,
       category: row.category || config.category,
@@ -389,26 +393,43 @@ const handleRegenerateAnswer = async (row) => {
       skills: config.skills,
       prompt: `针对以下题目，生成一个简短、专业的回答（只需要回答，不需要重复题目）：\n\n${row.question}`,
       ai_config_id: config.ai_config_id,
-    });
+    }));
+  };
 
-    if (res.data && res.data[0]) {
-      regenerateForm.value.newAnswer = res.data[0].answer || res.data[0].response || '';
+  regWs.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === 'progress') {
+        regenerateForm.value.newAnswer = data.item.answer || data.item.response || '生成内容为空';
+      } else if (data.type === 'complete') {
+        regWs.close();
+        regeneratingAnswer.value[row.index] = false;
+      } else if (data.type === 'error') {
+        regenerateForm.value.newAnswer = `错误: ${data.message}`;
+        regWs.close();
+        regeneratingAnswer.value[row.index] = false;
+      }
+    } catch (e) {
+      console.error('解析消息失败:', e);
     }
-  } catch (e) {
-    MessagePlugin.error('生成回答失败');
-  } finally {
+  };
+
+  regWs.onerror = () => {
+    regenerateForm.value.newAnswer = 'WebSocket连接错误';
     regeneratingAnswer.value[row.index] = false;
-  }
+  };
 };
 
 // 使用新回答
 const handleUseNewAnswer = () => {
   const idx = regenerateForm.value.index;
-  if (idx !== null && results.value[idx] && regenerateForm.value.newAnswer) {
+  if (idx !== null && results.value[idx] && regenerateForm.value.newAnswer && !regenerateForm.value.newAnswer.startsWith('错误') && !regenerateForm.value.newAnswer.startsWith('WebSocket')) {
     results.value[idx].answer = regenerateForm.value.newAnswer;
     results.value = [...results.value];
     regenerateDialogVisible.value = false;
     MessagePlugin.success('已使用新回答');
+  } else if (regenerateForm.value.newAnswer.startsWith('错误') || regenerateForm.value.newAnswer.startsWith('WebSocket')) {
+    MessagePlugin.error('生成失败，无法使用');
   }
 };
 
@@ -457,6 +478,13 @@ const handleAddToTestSet = async (row) => {
   try {
     await aiGenerateAPI.save({ items: [row] });
     MessagePlugin.success('已添加到测试集');
+    // 从结果列表移除
+    const idx = results.value.findIndex(r => r.index === row.index);
+    if (idx > -1) {
+      results.value.splice(idx, 1);
+      results.value.forEach((r, i) => r.index = i + 1);
+      results.value = [...results.value];
+    }
   } catch (e) {
     MessagePlugin.error(e?.response?.data?.message || '添加失败');
   }
@@ -472,6 +500,10 @@ const handleBatchAdd = async () => {
   try {
     await aiGenerateAPI.save({ items: selectedItems });
     MessagePlugin.success(`成功添加 ${selectedItems.length} 条到测试集`);
+    // 从结果列表移除已添加的项
+    results.value = results.value.filter(r => !selectedRows.value.includes(r.index));
+    results.value.forEach((r, i) => r.index = i + 1);
+    results.value = [...results.value];
     selectedRows.value = [];
   } catch (e) {
     MessagePlugin.error(e?.response?.data?.message || '添加失败');

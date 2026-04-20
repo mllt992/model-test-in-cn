@@ -3,7 +3,7 @@ import { MessagePlugin } from 'tdesign-vue-next';
 
 const request = axios.create({
   baseURL: '/api',
-  timeout: 30000,
+  timeout: 300000, // 5分钟，支持AI生成
 });
 
 // 请求拦截器：注入 Token

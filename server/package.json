@@ -18,6 +18,7 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
+    "ws": "^8.20.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
