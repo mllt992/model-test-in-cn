@@ -104,13 +104,22 @@
               </t-tag>
             </template>
             <template #is_duplicate="{ row }">
-              <t-tag v-if="row.is_duplicate" theme="warning" variant="light">重复</t-tag>
+              <t-tooltip v-if="row.duplicate_with" :content="`重复于: ${row.duplicate_with}`" placement="top">
+                <t-icon name="close-circle" style="color: #e34d59; font-size: 18px;" />
+              </t-tooltip>
+              <t-icon v-else-if="row.is_duplicate" name="close-circle" style="color: #e34d59; font-size: 18px;" />
+              <t-icon v-else-if="row.checked !== false" name="check-circle" style="color: #00a870; font-size: 18px;" />
               <span v-else style="color: #bbb">-</span>
             </template>
             <template #action="{ row }">
+              <t-button variant="text" size="small" theme="primary" @click="handleRegenerateAnswer(row)" :loading="regeneratingAnswer[row.index]">重新生成</t-button>
               <t-button variant="text" size="small" theme="primary" @click="handleEdit(row)">编辑</t-button>
               <t-button variant="text" size="small" theme="danger" @click="handleDelete(row)">删除</t-button>
               <t-button variant="text" size="small" theme="success" @click="handleAddToTestSet(row)">添加到测试集</t-button>
+            </template>
+            <template #answer-preview="{ row }">
+              <span v-if="row.answer">{{ row.answer.substring(0, 50) }}{{ row.answer.length > 50 ? '...' : '' }}</span>
+              <span v-else style="color: #bbb">无</span>
             </template>
           </t-table>
 
@@ -144,6 +153,25 @@
             </t-form-item>
           </t-form>
         </t-dialog>
+
+        <!-- 重新生成回答弹窗 -->
+        <t-dialog v-model:visible="regenerateDialogVisible" header="重新生成回答" :footer="false" width="700px">
+          <t-space direction="vertical" style="width: 100%" :size="16">
+            <t-alert theme="info">题目：{{ regenerateForm.question }}</t-alert>
+            <div class="ai-section">
+              <h4 style="margin-bottom: 8px">原回答</h4>
+              <div class="ai-answer-box">{{ regenerateForm.oldAnswer || '无' }}</div>
+            </div>
+            <div class="ai-section">
+              <h4 style="margin-bottom: 8px">AI生成回答</h4>
+              <div class="ai-answer-box ai-answer-new">{{ regenerateForm.newAnswer || '生成中...' }}</div>
+            </div>
+            <div style="text-align: right">
+              <t-button variant="outline" @click="regenerateDialogVisible = false">关闭</t-button>
+              <t-button theme="primary" style="margin-left: 12px" @click="handleUseNewAnswer" :disabled="!regenerateForm.newAnswer">使用新回答</t-button>
+            </div>
+          </t-space>
+        </t-dialog>
       </div>
     </div>
   </div>
@@ -175,21 +203,26 @@ const results = ref([]);
 const generating = ref(false);
 const selectedRows = ref([]);
 const checkingDuplicate = ref(false);
+const regeneratingAnswer = ref({});
 
 // 编辑
 const editDialogVisible = ref(false);
 const editIndex = ref(null);
 const editForm = ref({ question: '', answer: '', type: '', category: '', is_refused: 0 });
 
+// 重新生成回答
+const regenerateDialogVisible = ref(false);
+const regenerateForm = ref({ index: null, question: '', oldAnswer: '', newAnswer: '' });
+
 // 表格列
 const columns = [
   { colKey: 'row-select', type: 'multiple', width: 50 },
   { colKey: 'index', title: '#', width: 50 },
   { colKey: 'question', title: '题目', width: 280, ellipsis: true },
-  { colKey: 'answer', title: '回答', width: 200, ellipsis: true },
+  { colKey: 'answer', title: '回答', width: 200, ellipsis: true, cell: 'answer-preview' },
   { colKey: 'is_refused', title: '是否拒答', width: 90, cell: 'is_refused' },
   { colKey: 'is_duplicate', title: '重复检测', width: 90, cell: 'is_duplicate' },
-  { colKey: 'action', title: '操作', width: 240, cell: 'action', fixed: 'right' },
+  { colKey: 'action', title: '操作', width: 280, cell: 'action', fixed: 'right' },
 ];
 
 // 加载AI配置和技能
@@ -291,6 +324,50 @@ const handleEditSubmit = async ({ validateResult }) => {
   MessagePlugin.success('保存成功');
 };
 
+// 重新生成回答
+const handleRegenerateAnswer = async (row) => {
+  regenerateForm.value = {
+    index: row.index - 1,
+    question: row.question,
+    oldAnswer: row.answer || '',
+    newAnswer: '',
+  };
+  regenerateDialogVisible.value = true;
+  regeneratingAnswer.value[row.index] = true;
+
+  try {
+    // 调用AI生成回答
+    const res = await aiGenerateAPI.generate({
+      count: 1,
+      type: row.type || config.type,
+      category: row.category || config.category,
+      is_refused: row.is_refused,
+      skills: config.skills,
+      prompt: `针对以下题目，生成一个简短、专业的回答（只需要回答，不需要重复题目）：\n\n${row.question}`,
+      ai_config_id: config.ai_config_id,
+    });
+
+    if (res.data && res.data[0]) {
+      regenerateForm.value.newAnswer = res.data[0].answer || res.data[0].response || '';
+    }
+  } catch (e) {
+    MessagePlugin.error('生成回答失败');
+  } finally {
+    regeneratingAnswer.value[row.index] = false;
+  }
+};
+
+// 使用新回答
+const handleUseNewAnswer = () => {
+  const idx = regenerateForm.value.index;
+  if (idx !== null && results.value[idx] && regenerateForm.value.newAnswer) {
+    results.value[idx].answer = regenerateForm.value.newAnswer;
+    results.value = [...results.value];
+    regenerateDialogVisible.value = false;
+    MessagePlugin.success('已使用新回答');
+  }
+};
+
 // 删除
 const handleDelete = (row) => {
   const idx = results.value.findIndex(r => r.index === row.index);
@@ -349,29 +426,51 @@ const handleBatchAdd = async () => {
 
 // 重复检测
 const handleCheckDuplicates = async () => {
-  if (results.value.length < 2) {
-    MessagePlugin.info('至少需要2条记录才能检测重复');
+  if (results.value.length < 1) {
+    MessagePlugin.info('至少需要1条记录才能检测重复');
     return;
   }
   checkingDuplicate.value = true;
   try {
     const questions = results.value.map(r => r.question);
     const res = await aiGenerateAPI.checkDuplicate({ questions });
-    const duplicates = res.data || [];
+    const data = res.data || {};
+
+    const externalDuplicates = data.external_duplicates || [];
+    const internalDuplicates = data.internal_duplicates || [];
 
     // 重置所有重复标记
-    results.value.forEach(r => r.is_duplicate = false);
+    results.value.forEach(r => {
+      r.is_duplicate = false;
+      r.duplicate_with = null;
+      r.checked = true;
+    });
 
-    // 标记重复项
-    duplicates.forEach(d => {
+    // 标记与已有题目的重复
+    externalDuplicates.forEach(d => {
+      if (results.value[d.index]) {
+        results.value[d.index].is_duplicate = true;
+        results.value[d.index].duplicate_with = `已有题目(ID:${d.existing_id})`;
+      }
+    });
+
+    // 标记内部重复
+    internalDuplicates.forEach(d => {
       if (results.value[d.index1]) results.value[d.index1].is_duplicate = true;
       if (results.value[d.index2]) results.value[d.index2].is_duplicate = true;
     });
 
     results.value = [...results.value];
 
-    if (duplicates.length) {
-      MessagePlugin.warning(`检测到 ${duplicates.length} 组重复`);
+    const totalExternal = data.total_external || 0;
+    const totalInternal = data.total_internal || 0;
+
+    if (totalExternal > 0 || totalInternal > 0) {
+      let msg = `检测到 ${totalExternal} 条与已有题目重复`;
+      if (totalInternal > 0) {
+        msg += `，${totalInternal} 组内部重复`;
+      }
+      MessagePlugin.warning(msg);
     } else {
       MessagePlugin.success('未检测到重复');
     }
@@ -464,5 +563,28 @@ onMounted(() => {
 
 .prompt-selector {
   margin-top: 4px;
+}
+
+.ai-section {
+  background: #f5f5f5;
+  padding: 12px;
+  border-radius: 6px;
+}
+
+.ai-answer-box {
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  padding: 12px;
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ai-answer-box.ai-answer-new {
+  border-color: #0052d9;
+  background: #f0f5ff;
 }
 </style>

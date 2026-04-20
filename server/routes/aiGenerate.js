@@ -188,25 +188,69 @@ function parseGeneratedContent(content, type, category, is_refused) {
   };
 }
 
-// 重复检测
+// 重复检测 - 与数据库中已有的测试题进行比对
 router.post('/check-duplicate', (req, res) => {
   const { questions } = req.body;
   if (!questions || !Array.isArray(questions)) {
     return res.status(400).json({ code: 400, message: '缺少questions参数' });
   }
 
-  const duplicates = [];
-  const normalized = questions.map(q => q.toLowerCase().trim());
+  // 从数据库获取所有已存在的测试题
+  const existingQuestions = db.prepare('SELECT id, question FROM questions').all();
 
-  for (let i = 0; i < normalized.length; i++) {
-    for (let j = i + 1; j < normalized.length; j++) {
-      if (normalized[i] === normalized[j]) {
-        duplicates.push({ index1: i, index2: j, question: questions[i] });
+  const duplicates = [];
+  const normalizedNew = questions.map(q => q.toLowerCase().trim());
+
+  // 将已有题目转为标准化格式，便于比对
+  const existingMap = new Map();
+  existingQuestions.forEach(eq => {
+    const normalized = eq.question.toLowerCase().trim();
+    if (!existingMap.has(normalized)) {
+      existingMap.set(normalized, []);
+    }
+    existingMap.get(normalized).push({ id: eq.id, question: eq.question });
+  });
+
+  // 检测新题目与已有题目的重复
+  for (let i = 0; i < normalizedNew.length; i++) {
+    const newQ = normalizedNew[i];
+    if (existingMap.has(newQ)) {
+      const matches = existingMap.get(newQ);
+      matches.forEach(match => {
+        duplicates.push({
+          index: i,
+          question: questions[i],
+          existing_id: match.id,
+          existing_question: match.question
+        });
+      });
+    }
+  }
+
+  // 检测生成结果内部的重复
+  const internalDuplicates = [];
+  for (let i = 0; i < normalizedNew.length; i++) {
+    for (let j = i + 1; j < normalizedNew.length; j++) {
+      if (normalizedNew[i] === normalizedNew[j]) {
+        internalDuplicates.push({
+          index1: i,
+          index2: j,
+          question: questions[i],
+          type: 'internal'
+        });
       }
     }
   }
 
-  res.json({ code: 200, data: duplicates });
+  res.json({
+    code: 200,
+    data: {
+      external_duplicates: duplicates,  // 与已有题目的重复
+      internal_duplicates: internalDuplicates,  // 内部重复
+      total_external: duplicates.length,
+      total_internal: internalDuplicates.length
+    }
+  });
 });
 
 // 保存生成的题目
