@@ -17,9 +17,8 @@ if (!fs.existsSync(config.UPLOAD_DIR)) {
 router.get('/', (req, res) => {
   const {
     keyword,
-    type,          // 类型模糊搜索
-    no_type,       // 筛选未设置类型 1=是
-    no_category,   // 筛选未设置类别 1=是
+    type,          // 类型精确匹配
+    category,      // 类别精确匹配
     is_answered,   // -1=全部, 0=未回答, 1=已回答
     is_refused,     // -1=全部, 0=未拒答, 1=已拒答
     audit_count,    // 人工审核同意数筛选
@@ -37,14 +36,12 @@ router.get('/', (req, res) => {
     params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
   }
   if (type) {
-    conditions.push('q.type LIKE ?');
-    params.push(`%${type}%`);
+    conditions.push('q.type = ?');
+    params.push(type);
   }
-  if (no_type === '1') {
-    conditions.push('(q.type IS NULL OR q.type = "")');
-  }
-  if (no_category === '1') {
-    conditions.push('(q.category IS NULL OR q.category = "")');
+  if (category) {
+    conditions.push('q.category = ?');
+    params.push(category);
   }
   if (is_answered !== undefined && is_answered !== '-1' && is_answered !== '') {
     conditions.push('q.is_answered = ?');

@@ -15,9 +15,9 @@
         <t-option value="0" label="未回答" />
         <t-option value="1" label="已回答" />
       </t-select>
-      <t-select v-model="search.is_refused" placeholder="是否拒答" clearable style="width: 140px">
-        <t-option value="0" label="未拒答" />
-        <t-option value="1" label="已拒答" />
+      <t-select v-model="search.is_refused" placeholder="是否拒答" clearable style="width: 120px">
+        <t-option value="0" label="否" />
+        <t-option value="1" label="是" />
       </t-select>
       <t-select v-model="search.audit_count" placeholder="人工审核" clearable style="width: 140px">
         <t-option value="1" label=">=1人同意" />
@@ -390,8 +390,8 @@ import { questionsAPI } from '@/api';
 
 const search = reactive({
   keyword: '',
-  no_type: '',
-  no_category: '',
+  type: '',
+  category: '',
   is_answered: '',
   is_refused: '',
   audit_count: '',
@@ -400,6 +400,8 @@ const search = reactive({
 
 const tableData = ref([]);
 const selectedRows = ref([]);
+const typeOptions = ref([]);
+const categoryOptions = ref([]);
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 });
 const refusalRate = ref('0%');
 
@@ -663,8 +665,8 @@ const loadData = async () => {
     page: pagination.page,
     pageSize: pagination.pageSize,
   };
-  if (search.no_type) params.no_type = search.no_type;
-  if (search.no_category) params.no_category = search.no_category;
+  if (search.type) params.type = search.type;
+  if (search.category) params.category = search.category;
   if (search.is_answered) params.is_answered = search.is_answered;
   if (search.is_refused) params.is_refused = search.is_refused;
   if (search.audit_count) params.audit_count = search.audit_count;
@@ -680,14 +682,29 @@ const loadData = async () => {
 
 const resetSearch = () => {
   search.keyword = '';
-  search.no_type = '';
-  search.no_category = '';
+  search.type = '';
+  search.category = '';
   search.is_answered = '';
   search.is_refused = '';
   search.audit_count = '';
   search.audit_names = '';
   pagination.page = 1;
   loadData();
+};
+
+// 加载类型和类别选项
+const loadTypeOptions = async () => {
+  try {
+    const res = await questionsAPI.getTypes();
+    typeOptions.value = res.data;
+  } catch {}
+};
+
+const loadCategoryOptions = async () => {
+  try {
+    const res = await questionsAPI.getCategories();
+    categoryOptions.value = res.data;
+  } catch {}
 };
 
 const showAddDialog = () => {
@@ -985,7 +1002,11 @@ const handleExport = async () => {
   }
 };
 
-onMounted(loadData);
+onMounted(() => {
+  loadData();
+  loadTypeOptions();
+  loadCategoryOptions();
+});
 </script>
 
 <style scoped>
