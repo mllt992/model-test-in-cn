@@ -344,8 +344,8 @@ const loadConfigsAndSkills = async () => {
     typeOptions.value = (typesRes.data || []).map(t => ({ label: t, value: t }));
     categoryOptions.value = (categoriesRes.data || []).map(c => ({ label: c, value: c }));
 
-    // 默认选中第一个AI配置
-    if (aiConfigs.value.length > 0) {
+    // 只有在没有选中AI配置时才默认选中第一个
+    if (!config.ai_config_id && aiConfigs.value.length > 0) {
       config.ai_config_id = aiConfigs.value[0].id;
     }
   } catch (e) {
@@ -692,11 +692,13 @@ const handleSelectChange = (value) => {
   selectedRows.value = value;
 };
 
-onMounted(() => {
-  loadConfigsAndSkills();
-  // 从缓存加载生成结果和配置
-  loadResultsFromCache();
+onMounted(async () => {
+  // 先加载缓存中的配置
   loadConfigFromCache();
+  // 加载配置列表（缓存已有配置时不会覆盖）
+  await loadConfigsAndSkills();
+  // 加载生成结果
+  loadResultsFromCache();
 });
 
 // 监听配置变化，自动保存到缓存
