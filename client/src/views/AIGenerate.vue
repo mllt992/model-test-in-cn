@@ -54,7 +54,17 @@
           </t-form-item>
 
           <t-form-item label="生成数量">
-            <t-input-number v-model="config.count" :min="1" :max="20" :step="1" />
+            <t-input-number v-model="config.count" :min="1" :max="200" :step="1" />
+          </t-form-item>
+
+          <t-form-item label="并发数">
+            <t-input-number v-model="config.concurrency" :min="1" :max="10" :step="1" />
+            <div class="form-tip">同时并发调用AI的数量，默认5</div>
+          </t-form-item>
+
+          <t-form-item label="批量大小">
+            <t-input-number v-model="config.batch_size" :min="1" :max="20" :step="1" />
+            <div class="form-tip">每批生成题目数量，默认5</div>
           </t-form-item>
 
           <t-form-item>
@@ -93,6 +103,10 @@
           <t-button v-if="results.length" variant="outline" @click="handleCheckDuplicates" :loading="checkingDuplicate">
             <template #icon><t-icon name="scan" /></template>
             重复检测
+          </t-button>
+          <t-button v-if="hasDuplicates" theme="danger" variant="outline" @click="handleDeleteDuplicates">
+            <template #icon><t-icon name="delete" /></template>
+            删除重复 ({{ duplicateCount }}条)
           </t-button>
         </div>
 
@@ -183,14 +197,23 @@
             </div>
           </t-space>
         </t-dialog>
+
+        <!-- 确认删除弹窗 -->
+        <t-dialog v-model:visible="confirmDialogVisible" header="确认删除" width="400px" :footer="false">
+          <div style="padding: 8px 0;">{{ confirmDialogText }}</div>
+          <div style="text-align: right;">
+            <t-button variant="outline" @click="confirmDialogVisible = false">取消</t-button>
+            <t-button theme="danger" style="margin-left: 12px" @click="handleConfirmDialog">确认删除</t-button>
+          </div>
+        </t-dialog>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, watch } from 'vue';
-import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
+import { ref, reactive, computed, onMounted, watch } from 'vue';
+import { MessagePlugin } from 'tdesign-vue-next';
 import { aiConfigAPI, aiGenerateAPI, questionsAPI } from '@/api';
 
 const aiConfigs = ref([]);
@@ -209,6 +232,8 @@ const config = reactive({
   skills: [],
   prompt: '',
   count: 5,
+  batch_size: 5,  // 每批数量
+  concurrency: 5,  // 并发数
 });
 
 // 缓存键
@@ -224,6 +249,10 @@ const regeneratingAnswer = ref({});
 const generatingProgress = ref({ current: 0, total: 0 });
 const lastSentPrompt = ref('');
 let ws = null;
+
+// 计算属性：是否有重复
+const hasDuplicates = computed(() => results.value.some(r => r.is_duplicate));
+const duplicateCount = computed(() => results.value.filter(r => r.is_duplicate).length);
 
 // 保存结果到缓存
 const saveResultsToCache = () => {
@@ -269,6 +298,24 @@ const editForm = ref({ question: '', answer: '', type: '', category: '', is_refu
 // 重新生成回答
 const regenerateDialogVisible = ref(false);
 const regenerateForm = ref({ index: null, question: '', oldAnswer: '', newAnswer: '' });
+
+// 确认删除弹窗
+const confirmDialogVisible = ref(false);
+const confirmDialogText = ref('');
+const confirmDialogCallback = ref(null);
+
+const openConfirmDialog = (text, callback) => {
+  confirmDialogText.value = text;
+  confirmDialogCallback.value = callback;
+  confirmDialogVisible.value = true;
+};
+
+const handleConfirmDialog = () => {
+  confirmDialogVisible.value = false;
+  if (confirmDialogCallback.value) {
+    confirmDialogCallback.value();
+  }
+};
 
 // 表格列
 const columns = [
@@ -356,6 +403,8 @@ const handleGenerate = async () => {
       skills: config.skills,
       prompt: config.prompt,
       ai_config_id: config.ai_config_id,
+      batch_size: config.batch_size,
+      concurrency: config.concurrency,
     };
     lastSentPrompt.value = JSON.stringify(sendData, null, 2);
     ws.send(JSON.stringify(sendData));
@@ -499,37 +548,29 @@ const handleUseNewAnswer = () => {
 };
 
 // 删除
-const handleDelete = async (row) => {
-  const confirmed = await DialogPlugin.confirm({
-    header: '确认删除',
-    body: '确定删除该条记录吗？',
-    theme: 'warning',
-    confirmBtn: { content: '确认', theme: 'danger' },
+const handleDelete = (row) => {
+  openConfirmDialog('确定删除该条记录吗？', () => {
+    const idx = results.value.findIndex(r => r.index === row.index);
+    if (idx > -1) {
+      results.value.splice(idx, 1);
+      results.value.forEach((r, i) => r.index = i + 1);
+      results.value = [...results.value];
+      saveResultsToCache();
+    }
+    MessagePlugin.success('删除成功');
   });
-  if (!confirmed) return;
-  const idx = results.value.findIndex(r => r.index === row.index);
-  if (idx > -1) {
-    results.value.splice(idx, 1);
-    results.value.forEach((r, i) => r.index = i + 1);
-    results.value = [...results.value];
-  }
-  MessagePlugin.success('删除成功');
 };
 
 // 批量删除
-const handleBatchDelete = async () => {
-  const confirmed = await DialogPlugin.confirm({
-    header: '确认删除',
-    body: `确定删除选中的 ${selectedRows.value.length} 条记录吗？`,
-    theme: 'warning',
-    confirmBtn: { content: '确认', theme: 'danger' },
+const handleBatchDelete = () => {
+  openConfirmDialog(`确定删除选中的 ${selectedRows.value.length} 条记录吗？`, () => {
+    results.value = results.value.filter(r => !selectedRows.value.includes(r.index));
+    results.value.forEach((r, i) => r.index = i + 1);
+    results.value = [...results.value];
+    selectedRows.value = [];
+    saveResultsToCache();
+    MessagePlugin.success('删除成功');
   });
-  if (!confirmed) return;
-  results.value = results.value.filter(r => !selectedRows.value.includes(r.index));
-  results.value.forEach((r, i) => r.index = i + 1);
-  results.value = [...results.value];
-  selectedRows.value = [];
-  MessagePlugin.success('删除成功');
 };
 
 // 添加到测试集
@@ -543,6 +584,7 @@ const handleAddToTestSet = async (row) => {
       results.value.splice(idx, 1);
       results.value.forEach((r, i) => r.index = i + 1);
       results.value = [...results.value];
+      saveResultsToCache();
     }
   } catch (e) {
     MessagePlugin.error(e?.response?.data?.message || '添加失败');
@@ -564,6 +606,7 @@ const handleBatchAdd = async () => {
     results.value.forEach((r, i) => r.index = i + 1);
     results.value = [...results.value];
     selectedRows.value = [];
+    saveResultsToCache();
   } catch (e) {
     MessagePlugin.error(e?.response?.data?.message || '添加失败');
   }
@@ -624,6 +667,24 @@ const handleCheckDuplicates = async () => {
   } finally {
     checkingDuplicate.value = false;
   }
+};
+
+// 删除重复记录（带确认）
+const handleDeleteDuplicates = () => {
+  const duplicates = results.value.filter(r => r.is_duplicate);
+  if (duplicates.length === 0) {
+    MessagePlugin.info('没有需要删除的重复记录');
+    return;
+  }
+
+  openConfirmDialog(`确定删除 ${duplicates.length} 条重复记录吗？`, () => {
+    results.value = results.value.filter(r => !r.is_duplicate);
+    results.value.forEach((r, i) => r.index = i + 1);
+    results.value = [...results.value];
+    selectedRows.value = [];
+    saveResultsToCache();
+    MessagePlugin.success(`已删除 ${duplicates.length} 条重复记录`);
+  });
 };
 
 // 选择
@@ -715,6 +776,12 @@ watch(config, () => {
 }
 
 .prompt-selector {
+  margin-top: 4px;
+}
+
+.form-tip {
+  font-size: 12px;
+  color: #888;
   margin-top: 4px;
 }
 
