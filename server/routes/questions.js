@@ -454,11 +454,11 @@ router.post('/export', (req, res) => {
   }
   if (type) {
     conditions.push('q.type = ?');
-    params.push(type);
+    params.push(type.trim());
   }
   if (category) {
     conditions.push('q.category = ?');
-    params.push(category);
+    params.push(category.trim());
   }
   if (is_answered !== undefined && is_answered !== '-1' && is_answered !== '') {
     conditions.push('q.is_answered = ?');
