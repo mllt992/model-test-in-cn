@@ -35,6 +35,8 @@ export const questionsAPI = {
 
 export const statsAPI = {
   categoryDistribution: () => request.get('/stats/category-distribution'),
+  typeDistribution: () => request.get('/stats/type-distribution'),
+  categoryRejection: () => request.get('/stats/category-rejection'),
   questionWordcloud: () => request.get('/stats/question-wordcloud'),
   answerWordcloud: () => request.get('/stats/answer-wordcloud'),
 };

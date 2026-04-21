@@ -11,6 +11,29 @@ router.get('/category-distribution', (req, res) => {
   res.json({ code: 200, data: rows });
 });
 
+// 测试题类型占比
+router.get('/type-distribution', (req, res) => {
+  const rows = db.prepare(
+    "SELECT type, COUNT(*) AS count FROM questions WHERE type IS NOT NULL AND type != '' GROUP BY type ORDER BY count DESC"
+  ).all();
+  res.json({ code: 200, data: rows });
+});
+
+// 类别拒答情况统计
+router.get('/category-rejection', (req, res) => {
+  const rows = db.prepare(`
+    SELECT
+      category,
+      SUM(CASE WHEN is_refused = 1 THEN 1 ELSE 0 END) AS refused,
+      SUM(CASE WHEN is_refused = 0 THEN 1 ELSE 0 END) AS answered
+    FROM questions
+    WHERE category IS NOT NULL AND category != ''
+    GROUP BY category
+    ORDER BY category
+  `).all();
+  res.json({ code: 200, data: rows });
+});
+
 // 题目词云词频（对 question 字段做简单中文分词统计）
 router.get('/question-wordcloud', (req, res) => {
   const rows = db.prepare('SELECT question FROM questions').all();

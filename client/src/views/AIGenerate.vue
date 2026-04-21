@@ -12,11 +12,15 @@
           </t-form-item>
 
           <t-form-item label="类型">
-            <t-input v-model="config.type" placeholder="如：文本生成、图像生成" />
+            <t-select v-model="config.type" placeholder="选择或输入类型" clearable filterable creatable style="width: 100%">
+              <t-option v-for="t in typeOptions" :key="t.value" :value="t.value" :label="t.label" />
+            </t-select>
           </t-form-item>
 
           <t-form-item label="类别">
-            <t-input v-model="config.category" placeholder="请输入类别" />
+            <t-select v-model="config.category" placeholder="选择或输入类别" clearable filterable creatable style="width: 100%">
+              <t-option v-for="c in categoryOptions" :key="c.value" :value="c.value" :label="c.label" />
+            </t-select>
           </t-form-item>
 
           <t-form-item label="是否拒答">
@@ -58,6 +62,13 @@
               <template #icon><t-icon name="chat" /></template>
               {{ generating ? `生成中 (${generatingProgress.current}/${generatingProgress.total})` : '生成题目' }}
             </t-button>
+          </t-form-item>
+
+          <t-form-item v-if="lastSentPrompt">
+            <div class="last-prompt">
+              <div class="last-prompt-label">最后发送的提示词：</div>
+              <div class="last-prompt-content">{{ lastSentPrompt }}</div>
+            </div>
           </t-form-item>
         </t-form>
       </div>
@@ -178,14 +189,16 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, onMounted, watch } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
-import { aiConfigAPI, aiGenerateAPI } from '@/api';
+import { aiConfigAPI, aiGenerateAPI, questionsAPI } from '@/api';
 
 const aiConfigs = ref([]);
 const skills = ref([]);
 const prompts = ref([]);
 const selectedPromptId = ref(null);
+const typeOptions = ref([]);
+const categoryOptions = ref([]);
 
 // 配置
 const config = reactive({
@@ -198,6 +211,10 @@ const config = reactive({
   count: 5,
 });
 
+// 缓存键
+const RESULTS_CACHE_KEY = 'ai_generate_results';
+const CONFIG_CACHE_KEY = 'ai_generate_config';
+
 // 生成结果
 const results = ref([]);
 const generating = ref(false);
@@ -205,7 +222,44 @@ const selectedRows = ref([]);
 const checkingDuplicate = ref(false);
 const regeneratingAnswer = ref({});
 const generatingProgress = ref({ current: 0, total: 0 });
+const lastSentPrompt = ref('');
 let ws = null;
+
+// 保存结果到缓存
+const saveResultsToCache = () => {
+  localStorage.setItem(RESULTS_CACHE_KEY, JSON.stringify(results.value));
+};
+
+// 加载结果从缓存
+const loadResultsFromCache = () => {
+  const cached = localStorage.getItem(RESULTS_CACHE_KEY);
+  if (cached) {
+    try {
+      const data = JSON.parse(cached);
+      if (Array.isArray(data) && data.length > 0) {
+        results.value = data;
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+};
+
+// 清除缓存
+const clearResultsCache = () => {
+  localStorage.removeItem(RESULTS_CACHE_KEY);
+};
+
+// 加载配置从缓存
+const loadConfigFromCache = () => {
+  const cached = localStorage.getItem(CONFIG_CACHE_KEY);
+  if (cached) {
+    try {
+      const data = JSON.parse(cached);
+      Object.assign(config, data);
+    } catch {}
+  }
+};
 
 // 编辑
 const editDialogVisible = ref(false);
@@ -227,17 +281,21 @@ const columns = [
   { colKey: 'action', title: '操作', width: 280, cell: 'action', fixed: 'right' },
 ];
 
-// 加载AI配置和技能
+// 加载AI配置、技能、类型和类别
 const loadConfigsAndSkills = async () => {
   try {
-    const [configsRes, skillsRes, promptsRes] = await Promise.all([
+    const [configsRes, skillsRes, promptsRes, typesRes, categoriesRes] = await Promise.all([
       aiConfigAPI.list(),
       aiConfigAPI.getSkills(),
       aiConfigAPI.getPrompts(),
+      questionsAPI.getTypes(),
+      questionsAPI.getCategories(),
     ]);
     aiConfigs.value = configsRes.data || [];
     skills.value = skillsRes.data || [];
     prompts.value = promptsRes.data || [];
+    typeOptions.value = (typesRes.data || []).map(t => ({ label: t, value: t }));
+    categoryOptions.value = (categoriesRes.data || []).map(c => ({ label: c, value: c }));
 
     // 默认选中第一个AI配置
     if (aiConfigs.value.length > 0) {
@@ -276,6 +334,9 @@ const handleGenerate = async () => {
     ws = null;
   }
 
+  // 开始新的生成时清除旧缓存
+  clearResultsCache();
+
   generating.value = true;
   generatingProgress.value = { current: 0, total: config.count };
   results.value = [];
@@ -287,7 +348,7 @@ const handleGenerate = async () => {
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
-    ws.send(JSON.stringify({
+    const sendData = {
       count: config.count,
       type: config.type,
       category: config.category,
@@ -295,7 +356,9 @@ const handleGenerate = async () => {
       skills: config.skills,
       prompt: config.prompt,
       ai_config_id: config.ai_config_id,
-    }));
+    };
+    lastSentPrompt.value = JSON.stringify(sendData, null, 2);
+    ws.send(JSON.stringify(sendData));
   };
 
   ws.onmessage = (event) => {
@@ -311,10 +374,12 @@ const handleGenerate = async () => {
           is_duplicate: false,
         };
         results.value = [...results.value, newItem];
+        saveResultsToCache();
       } else if (data.type === 'complete') {
         generating.value = false;
         ws.close();
         ws = null;
+        saveResultsToCache();
         MessagePlugin.success(`成功生成${data.total}条`);
       } else if (data.type === 'error') {
         generating.value = false;
@@ -434,43 +499,37 @@ const handleUseNewAnswer = () => {
 };
 
 // 删除
-const handleDelete = (row) => {
-  const dialog = DialogPlugin.confirm({
+const handleDelete = async (row) => {
+  const confirmed = await DialogPlugin.confirm({
     header: '确认删除',
     body: '确定删除该条记录吗？',
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
-    onConfirm: () => {
-      const idx = results.value.findIndex(r => r.index === row.index);
-      if (idx > -1) {
-        results.value.splice(idx, 1);
-        results.value.forEach((r, i) => r.index = i + 1);
-        results.value = [...results.value];
-      }
-      dialog.destroy();
-      MessagePlugin.success('删除成功');
-    },
-    onClose: () => dialog.destroy(),
   });
+  if (!confirmed) return;
+  const idx = results.value.findIndex(r => r.index === row.index);
+  if (idx > -1) {
+    results.value.splice(idx, 1);
+    results.value.forEach((r, i) => r.index = i + 1);
+    results.value = [...results.value];
+  }
+  MessagePlugin.success('删除成功');
 };
 
 // 批量删除
-const handleBatchDelete = () => {
-  const dialog = DialogPlugin.confirm({
+const handleBatchDelete = async () => {
+  const confirmed = await DialogPlugin.confirm({
     header: '确认删除',
     body: `确定删除选中的 ${selectedRows.value.length} 条记录吗？`,
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
-    onConfirm: () => {
-      results.value = results.value.filter(r => !selectedRows.value.includes(r.index));
-      results.value.forEach((r, i) => r.index = i + 1);
-      results.value = [...results.value];
-      selectedRows.value = [];
-      dialog.destroy();
-      MessagePlugin.success('删除成功');
-    },
-    onClose: () => dialog.destroy(),
   });
+  if (!confirmed) return;
+  results.value = results.value.filter(r => !selectedRows.value.includes(r.index));
+  results.value.forEach((r, i) => r.index = i + 1);
+  results.value = [...results.value];
+  selectedRows.value = [];
+  MessagePlugin.success('删除成功');
 };
 
 // 添加到测试集
@@ -574,7 +633,15 @@ const handleSelectChange = (value) => {
 
 onMounted(() => {
   loadConfigsAndSkills();
+  // 从缓存加载生成结果和配置
+  loadResultsFromCache();
+  loadConfigFromCache();
 });
+
+// 监听配置变化，自动保存到缓存
+watch(config, () => {
+  localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(config));
+}, { deep: true });
 </script>
 
 <style scoped>
@@ -672,5 +739,29 @@ onMounted(() => {
 .ai-answer-box.ai-answer-new {
   border-color: #0052d9;
   background: #f0f5ff;
+}
+
+.last-prompt {
+  margin-top: 12px;
+  padding: 10px;
+  background: #f0f5ff;
+  border: 1px solid #d9e8ff;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.last-prompt-label {
+  color: #0052d9;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.last-prompt-content {
+  color: #666;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 100px;
+  overflow-y: auto;
+  line-height: 1.5;
 }
 </style>

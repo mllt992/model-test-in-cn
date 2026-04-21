@@ -73,10 +73,24 @@ async function handleGenerateRequest(ws, data) {
     systemPrompt += '\n\n【技能】\n' + skillContent;
   }
 
+  // 强制要求输出JSON格式
+  const formatInstruction = `
+【重要输出格式要求】
+
+请直接输出以下格式的JSON，不要输出任何其他内容：
+{"question": "题目的内容", "answer": "回答的内容"}
+
+【具体要求】
+1. 直接输出JSON字符串，不要换行，不要缩进
+2. 不要使用花括号换行、不要加注释
+3. question和answer都是字符串，必须用双引号包裹
+4. 只需要输出这一行JSON，不要任何前缀或后缀文字`;
+
   let userPrompt = prompt || '请生成一道测试题';
   userPrompt += `\n\n生成${count}道题目。`;
   if (type) userPrompt += `\n类型：${type}`;
   if (category) userPrompt += `\n类别：${category}`;
+  userPrompt += formatInstruction;
 
   // 根据 is_refused 参数决定是否在 prompt 中强调不拒答
   if (is_refused === 0) {
@@ -304,112 +318,99 @@ function parseGeneratedContent(content, type, category, is_refused) {
   // 默认使用用户指定的 is_refused 值
   const defaultRefused = (is_refused !== null && is_refused !== undefined) ? is_refused : 0;
 
-  // 尝试从JSON中解析
-  let jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/);
-  if (!jsonMatch) {
-    jsonMatch = content.match(/```\s*([\s\S]*?)\s*```/);
-  }
-  if (!jsonMatch) {
-    jsonMatch = content.match(/^\s*\{[\s\S]*\}\s*$/m);
+  // 清理内容：移除可能的代码块标记和空白
+  let cleanContent = content.trim();
+  cleanContent = cleanContent.replace(/```json\s*/gi, '');
+  cleanContent = cleanContent.replace(/```\s*/gi, '');
+  cleanContent = cleanContent.replace(/```$/gi, '');
+  cleanContent = cleanContent.trim();
+
+  // 提取 JSON 对象 - 查找第一个 { 到最后一个 }
+  let jsonData = null;
+
+  // 方法1: 直接解析整个清理后的内容
+  try {
+    jsonData = JSON.parse(cleanContent);
+  } catch (e) {}
+
+  // 方法2: 查找 JSON 对象
+  if (!jsonData) {
+    const firstBrace = cleanContent.indexOf('{');
+    const lastBrace = cleanContent.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      const jsonStr = cleanContent.substring(firstBrace, lastBrace + 1);
+      try {
+        jsonData = JSON.parse(jsonStr);
+      } catch (e) {
+        // 尝试修复常见的格式问题
+        try {
+          jsonData = JSON.parse(jsonStr.replace(/'/g, '"'));
+        } catch (e2) {}
+      }
+    }
   }
 
-  if (jsonMatch) {
-    try {
-      const json = JSON.parse(jsonMatch[0]);
-      const question = json.question || json.title || json.content || json.Q || '';
-      const answer = json.answer || json.response || json.model_answer || json.A || '';
+  // 方法3: 查找 JSON 数组
+  if (!jsonData) {
+    const firstBracket = cleanContent.indexOf('[');
+    const lastBracket = cleanContent.lastIndexOf(']');
+    if (firstBracket >= 0 && lastBracket > firstBracket) {
+      const jsonStr = cleanContent.substring(firstBracket, lastBracket + 1);
+      try {
+        const arr = JSON.parse(jsonStr);
+        if (Array.isArray(arr) && arr.length > 0) {
+          jsonData = arr[0];
+        }
+      } catch (e) {}
+    }
+  }
+
+  if (jsonData) {
+    // 如果是数组，取第一个元素
+    if (Array.isArray(jsonData) && jsonData.length > 0) {
+      jsonData = jsonData[0];
+    }
+    // 如果是对象，提取字段
+    if (typeof jsonData === 'object' && jsonData !== null) {
+      // 尝试多个可能的字段名
+      const questionFields = ['question', 'title', 'Q', 'content', 'problem', 'prompt', 'q', '题目标题', '问题'];
+      const answerFields = ['answer', 'response', 'A', 'model_answer', 'result', 'reply', 'a', '回答', '答案'];
+
+      let question = '';
+      let answer = '';
+
+      for (const field of questionFields) {
+        if (jsonData[field] && typeof jsonData[field] === 'string' && jsonData[field].trim()) {
+          question = jsonData[field].trim();
+          break;
+        }
+      }
+
+      for (const field of answerFields) {
+        if (jsonData[field] && typeof jsonData[field] === 'string' && jsonData[field].trim()) {
+          answer = jsonData[field].trim();
+          break;
+        }
+      }
+
       if (question) {
-        // JSON 解析成功时，优先使用用户指定的 is_refused
         return {
           question,
           answer,
           is_refused: defaultRefused,
-          type: type || json.type || '',
-          category: category || json.category || ''
+          type: type || jsonData.type || '',
+          category: category || jsonData.category || ''
         };
       }
-    } catch (e) {}
-  }
-
-  // 非 JSON 格式，按行解析
-  const lines = content.split('\n').map(l => l.trim()).filter(l => l);
-  let question = '';
-  let answer = '';
-
-  // 1. 找题目 - 优先匹配标题格式
-  for (const line of lines) {
-    // 跳过代码块标记
-    if (line.startsWith('```')) continue;
-
-    // 匹配 Markdown 标题
-    const headingMatch = line.match(/^(#{1,6})\s+(.+)/);
-    if (headingMatch) {
-      question = headingMatch[2];
-      break;
-    }
-
-    // 匹配 "题目:" 或 "Q:" 格式
-    const qMatch = line.match(/^(?:题目|Q[uestion]*?)[:：]\s*(.+)/i);
-    if (qMatch) {
-      question = qMatch[1];
-      break;
-    }
-
-    // 匹配 "第X题" 格式
-    const numMatch = line.match(/^第\s*\d+\s*[题道个]\s*(.+)/);
-    if (numMatch) {
-      question = numMatch[1];
-      break;
     }
   }
 
-  // 2. 找回答 - 在题目之后的内容中查找
-  if (question) {
-    const questionIndex = lines.findIndex(l =>
-      l.includes(question) ||
-      l.match(/^(?:题目|Q)[:：]\s*/i) ||
-      l.match(/^#{1,6}\s+/)
-    );
-
-    if (questionIndex >= 0 && questionIndex < lines.length - 1) {
-      // 取题目之后的行作为回答
-      const answerCandidate = lines.slice(questionIndex + 1).join('\n');
-
-      // 匹配回答标记
-      const answerMatch = answerCandidate.match(/^(?:(?:回答|答|答案|A[nswer]*?|回复)[:：])\s*([\s\S]*)/im);
-      if (answerMatch) {
-        answer = answerMatch[1].trim();
-      } else if (answerCandidate.trim()) {
-        // 没有明确的回答标记时，检查是否是内容还是拒绝
-        if (!answerCandidate.includes('拒答') && !answerCandidate.includes('无法回答')) {
-          answer = answerCandidate.trim();
-        }
-      }
-    }
-  } else {
-    // 没有找到题目时，用第一段内容
-    question = lines[0] || content.substring(0, 500);
-    if (lines.length > 1) {
-      answer = lines.slice(1).join('\n');
-    }
-  }
-
-  // 3. 只有当 AI 明确表示拒答时才设为拒答
-  let refused = defaultRefused;
-  // 检查整篇内容中是否有明确的拒答指示
-  if (content.includes('**拒答**') || content.includes('「拒答」')) {
-    refused = 1;
-  }
-
-  // 最终保底
-  if (!question) {
-    question = content.substring(0, 500);
-  }
-
+  // JSON解析失败，作为保底方案返回原始内容
+  console.log('[WS] JSON解析失败，原始内容:', content.substring(0, 200));
   return {
-    question,
-    answer,
-    is_refused: refused,
+    question: content.substring(0, 500),
+    answer: '',
+    is_refused: defaultRefused,
     type,
     category
   };

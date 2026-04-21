@@ -209,11 +209,25 @@ const configColumns = [
   { colKey: 'action', title: '操作', width: 220, cell: 'action', fixed: 'right' },
 ];
 
+const CONFIG_CACHE_KEY = 'ai_config_cache';
+const SKILLS_CACHE_KEY = 'ai_skills_cache';
+const PROMPTS_CACHE_KEY = 'ai_prompts_cache';
+
 const loadConfigs = async () => {
   try {
     const res = await aiConfigAPI.list();
     configs.value = res.data || [];
-  } catch {}
+    // 缓存到本地
+    localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(configs.value));
+  } catch {
+    // 加载失败时尝试从缓存读取
+    const cached = localStorage.getItem(CONFIG_CACHE_KEY);
+    if (cached) {
+      try {
+        configs.value = JSON.parse(cached);
+      } catch {}
+    }
+  }
 };
 
 const showAddConfigDialog = () => {
@@ -358,7 +372,15 @@ const loadSkills = async () => {
   try {
     const res = await aiConfigAPI.getSkills();
     skills.value = res.data || [];
-  } catch {}
+    localStorage.setItem(SKILLS_CACHE_KEY, JSON.stringify(skills.value));
+  } catch {
+    const cached = localStorage.getItem(SKILLS_CACHE_KEY);
+    if (cached) {
+      try {
+        skills.value = JSON.parse(cached);
+      } catch {}
+    }
+  }
 };
 
 const showAddSkillDialog = () => {
@@ -437,7 +459,15 @@ const loadPrompts = async () => {
   try {
     const res = await aiConfigAPI.getPrompts();
     prompts.value = res.data || [];
-  } catch {}
+    localStorage.setItem(PROMPTS_CACHE_KEY, JSON.stringify(prompts.value));
+  } catch {
+    const cached = localStorage.getItem(PROMPTS_CACHE_KEY);
+    if (cached) {
+      try {
+        prompts.value = JSON.parse(cached);
+      } catch {}
+    }
+  }
 };
 
 const showAddPromptDialog = () => {

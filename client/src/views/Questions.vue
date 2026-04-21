@@ -359,17 +359,7 @@
               <t-tag theme="danger" variant="light" size="small">{{ group.count }}条重复</t-tag>
               <span class="dup-question">{{ group.question }}</span>
             </div>
-            <t-table :data="group.items" row-key="id" size="small" :max-height="200">
-              <t-table-column colKey="id" title="ID" width="60" />
-              <t-table-column colKey="category" title="类别" width="100" />
-              <t-table-column colKey="model_answer" title="模型回答" ellipsis />
-              <t-table-column colKey="created_at" title="创建时间" width="160" />
-              <t-table-column colKey="action" title="保留" width="60">
-                <template #action="{ row }">
-                  <t-radio :checked="keepIds[group.question] === row.id" @change="keepIds[group.question] = row.id" />
-                </template>
-              </t-table-column>
-            </t-table>
+            <t-table :data="group.items" :columns="dupColumns" row-key="id" size="small" :max-height="200" />
           </div>
           <div style="text-align: right">
             <t-button variant="outline" @click="duplicateDialogVisible = false">关闭</t-button>
@@ -599,6 +589,20 @@ const handleRevokeApprove = async (row) => {
   } catch {}
 };
 
+const dupColumns = [
+  { colKey: 'id', title: 'ID', width: 60 },
+  { colKey: 'category', title: '类别', width: 100 },
+  { colKey: 'model_answer', title: '模型回答', ellipsis: true },
+  { colKey: 'created_at', title: '创建时间', width: 160 },
+  {
+    colKey: 'action', title: '保留', width: 60,
+    cell: (h, { row }) => h('t-radio', {
+      checked: keepIds.value[group.question] === row.id,
+      onChange: () => { keepIds.value[group.question] = row.id; }
+    })
+  },
+];
+
 // 重复检测
 const duplicateDialogVisible = ref(false);
 const duplicateLoading = ref(false);
@@ -640,23 +644,23 @@ const handleRemoveDuplicates = async () => {
     return;
   }
 
-  DialogPlugin.confirm({
+  const confirmed = await DialogPlugin.confirm({
     header: '确认删除',
     body: `确定删除 ${deleteIds.length} 条重复记录吗？每组将保留选中的那条。`,
     theme: 'warning',
     confirmBtn: { content: '确认删除', theme: 'danger' },
-    onConfirm: async () => {
-      duplicateRemoving.value = true;
-      try {
-        await questionsAPI.removeDuplicates(deleteIds);
-        MessagePlugin.success(`成功删除 ${deleteIds.length} 条重复记录`);
-        duplicateDialogVisible.value = false;
-        loadData();
-      } catch {} finally {
-        duplicateRemoving.value = false;
-      }
-    },
   });
+  if (!confirmed) return;
+
+  duplicateRemoving.value = true;
+  try {
+    await questionsAPI.removeDuplicates(deleteIds);
+    MessagePlugin.success(`成功删除 ${deleteIds.length} 条重复记录`);
+    duplicateDialogVisible.value = false;
+    loadData();
+  } catch {} finally {
+    duplicateRemoving.value = false;
+  }
 };
 
 const loadData = async () => {
@@ -758,44 +762,38 @@ const handleSubmit = async ({ validateResult }) => {
   } catch {}
 };
 
-const handleDelete = (row) => {
-  const dialog = DialogPlugin.confirm({
+const handleDelete = async (row) => {
+  const confirmed = await DialogPlugin.confirm({
     header: '确认删除',
     body: '确定删除该题目吗？',
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
-    onConfirm: async () => {
-      try {
-        await questionsAPI.delete(row.id);
-        MessagePlugin.success('删除成功');
-        dialog.destroy();
-        loadData();
-      } catch {}
-    },
-    onClose: () => dialog.destroy(),
   });
+  if (!confirmed) return;
+  try {
+    await questionsAPI.delete(row.id);
+    MessagePlugin.success('删除成功');
+    loadData();
+  } catch {}
 };
 
 const handleSelectChange = (value) => {
   selectedRows.value = value;
 };
 
-const handleBatchDelete = () => {
-  const dialog = DialogPlugin.confirm({
+const handleBatchDelete = async () => {
+  const confirmed = await DialogPlugin.confirm({
     header: '批量删除',
     body: `确定删除选中的 ${selectedRows.value.length} 条记录吗？`,
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
-    onConfirm: async () => {
-      try {
-        await questionsAPI.batchDelete({ ids: selectedRows.value });
-        MessagePlugin.success('批量删除成功');
-        dialog.destroy();
-        loadData();
-      } catch {}
-    },
-    onClose: () => dialog.destroy(),
   });
+  if (!confirmed) return;
+  try {
+    await questionsAPI.batchDelete({ ids: selectedRows.value });
+    MessagePlugin.success('批量删除成功');
+    loadData();
+  } catch {}
 };
 
 // 批量设置类型
@@ -979,6 +977,8 @@ const handleExport = async () => {
     }));
     const params = { columns, format: exportFormat.value };
     if (search.keyword) params.keyword = search.keyword;
+    if (search.type) params.type = search.type;
+    if (search.category) params.category = search.category;
     if (search.is_answered) params.is_answered = search.is_answered;
     if (search.is_refused) params.is_refused = search.is_refused;
     if (search.audit_count) params.audit_count = search.audit_count;
