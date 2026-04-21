@@ -761,12 +761,12 @@ watch(config, () => {
 
 .table-wrapper {
   flex: 1;
-  overflow: hidden;
+  overflow: auto;
   min-height: 0;
 }
 
 .table-wrapper :deep(.t-table) {
-  height: 100%;
+  max-height: 100%;
 }
 
 .prompt-wrapper {
