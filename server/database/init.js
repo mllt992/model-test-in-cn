@@ -20,8 +20,28 @@ db.exec(`
     username TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
     nickname TEXT NOT NULL,
+    organization_id INTEGER DEFAULT NULL,
+    is_admin INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS organizations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS organization_admins (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    organization_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(organization_id, user_id),
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS blockwords (
@@ -106,17 +126,23 @@ migrate('questions', 'audit_results', "TEXT DEFAULT '[]'");
 
 migrate('ai_config', 'name', "TEXT NOT NULL DEFAULT '默认配置'");
 migrate('ai_config', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+migrate('users', 'organization_id', 'INTEGER DEFAULT NULL');
+migrate('users', 'is_admin', 'INTEGER DEFAULT 0');
 
 // 初始化管理员账号
-const existingUser = db.prepare('SELECT id FROM users WHERE username = ?').get('xrilang');
+const existingUser = db.prepare('SELECT id, is_admin FROM users WHERE username = ?').get('xrilang');
 if (!existingUser) {
   const hashedPassword = bcrypt.hashSync('123456', 10);
-  db.prepare('INSERT INTO users (username, password, nickname) VALUES (?, ?, ?)').run(
+  db.prepare('INSERT INTO users (username, password, nickname, is_admin) VALUES (?, ?, ?, 1)').run(
     'xrilang',
     hashedPassword,
     '管理员'
   );
   console.log('[SETUP] Admin account created: xrilang / 123456');
+} else if (existingUser.is_admin !== 1) {
+  // 确保已有管理员账号的 is_admin 字段为 1
+  db.prepare('UPDATE users SET is_admin = 1 WHERE username = ?').run('xrilang');
+  console.log('[SETUP] Admin account updated: xrilang set as system admin');
 } else {
   console.log('[INFO] Admin account already exists');
 }

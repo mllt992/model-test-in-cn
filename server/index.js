@@ -23,6 +23,7 @@ app.use(express.urlencoded({ extended: true, limit: BODY_SIZE_LIMIT }));
 
 // 路由
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/organizations', require('./routes/organization'));
 app.use('/api/blockwords', require('./routes/blockwords'));
 app.use('/api/questions', require('./routes/questions'));
 app.use('/api/ai-config', require('./routes/aiConfig'));

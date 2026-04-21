@@ -43,8 +43,8 @@ const handleLogin = async ({ validateResult }) => {
     localStorage.setItem('user', JSON.stringify(res.data.user));
     MessagePlugin.success('登录成功');
     router.push('/');
-  } catch {
-    // 错误已在拦截器处理
+  } catch (e) {
+    MessagePlugin.error(e?.response?.data?.message || '登录失败');
   } finally {
     loading.value = false;
   }

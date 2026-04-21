@@ -65,3 +65,25 @@ export const aiGenerateAPI = {
   checkDuplicate: (data) => request.post('/ai-generate/check-duplicate', data),
   save: (data) => request.post('/ai-generate/save', data),
 };
+
+// 组织管理 API
+export const organizationAPI = {
+  list: (params) => request.get('/organizations', { params }),
+  get: (id) => request.get(`/organizations/${id}`),
+  create: (data) => request.post('/organizations', data),
+  update: (id, data) => request.put(`/organizations/${id}`, data),
+  delete: (id) => request.delete(`/organizations/${id}`),
+  getAvailableUsers: () => request.get('/organizations/users/available'),
+  getMembers: (id) => request.get(`/organizations/${id}/members`),
+  addMember: (orgId, userId) => request.post(`/organizations/${orgId}/members`, { user_id: userId }),
+  removeMember: (orgId, userId) => request.delete(`/organizations/${orgId}/members/${userId}`),
+};
+
+// 用户管理 API
+export const userAPI = {
+  list: (params) => request.get('/auth/users', { params }),
+  create: (data) => request.post('/auth/users', data),
+  update: (id, data) => request.put(`/auth/users/${id}`, data),
+  delete: (id) => request.delete(`/auth/users/${id}`),
+  getOrganizations: () => request.get('/auth/organizations'),
+};

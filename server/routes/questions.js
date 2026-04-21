@@ -26,6 +26,8 @@ router.get('/', (req, res) => {
     page = 1,
     pageSize = 10,
   } = req.query;
+
+  console.log('[QUESTIONS LIST] Query params:', req.query);
   const offset = (page - 1) * pageSize;
 
   const conditions = [];
@@ -62,13 +64,35 @@ router.get('/', (req, res) => {
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const list = db.prepare(
-    `SELECT q.*, u1.nickname as creator_name, u2.nickname as updater_name
+  // 调试：检查数据库中该type的实际数据
+  const debugType = type ? type.trim() : null;
+  let debugInfo = {};
+  if (debugType) {
+    try {
+      const exactMatch = db.prepare("SELECT COUNT(*) as cnt FROM questions WHERE type = ?").get(debugType);
+      const likeMatch = db.prepare("SELECT COUNT(*) as cnt FROM questions WHERE type LIKE ?").get(`%${debugType}%`);
+      const allTypes = db.prepare("SELECT DISTINCT type FROM questions WHERE type IS NOT NULL LIMIT 20").all();
+      debugInfo = { exactMatch: exactMatch.cnt, likeMatch: likeMatch.cnt, sampleTypes: allTypes.map(t => t.type).slice(0, 10) };
+    } catch (e) {
+      debugInfo = { error: e.message };
+    }
+  }
+  console.log('[QUESTIONS LIST] Debug:', debugInfo);
+
+  // 添加 rowid 作为次级排序，确保排序稳定
+  const sql = `SELECT q.*, u1.nickname as creator_name, u2.nickname as updater_name
      FROM questions q
      LEFT JOIN users u1 ON q.creator_id = u1.id
      LEFT JOIN users u2 ON q.updater_id = u2.id
-     ${where} ORDER BY q.id DESC LIMIT ? OFFSET ?`
-  ).all(...params, Number(pageSize), Number(offset));
+     ${where} ORDER BY q.id DESC, q.rowid DESC LIMIT ? OFFSET ?`;
+  console.log('[QUESTIONS LIST] SQL:', sql);
+  console.log('[QUESTIONS LIST] Params:', [...params, Number(pageSize), Number(offset)]);
+
+  const list = db.prepare(sql).all(...params, Number(pageSize), Number(offset));
+  console.log('[QUESTIONS LIST] Raw list from DB:', list.length, 'items');
+  if (list.length > 0) {
+    console.log('[QUESTIONS LIST] First item type:', list[0].type, '| raw bytes:', Buffer.from(list[0].type || '').toJSON());
+  }
 
   // 拒答比例统计
   const totalParams = [...params];
@@ -94,6 +118,7 @@ router.get('/', (req, res) => {
       pageSize: Number(pageSize),
     },
   });
+  console.log('[QUESTIONS LIST] Response:', { code: 200, total: totalResult.total, listLength: resultList.length, firstItem: resultList[0] || null });
 });
 
 // 获取类型列表
@@ -415,7 +440,7 @@ router.post('/remove-duplicates', (req, res) => {
 
 // 导出
 router.post('/export', (req, res) => {
-  const { columns, format = 'xlsx', keyword, type, is_answered, is_refused, audit_count, audit_names } = req.body;
+  const { columns, format = 'xlsx', keyword, type, category, is_answered, is_refused, audit_count, audit_names } = req.body;
 
   if (!columns || !Array.isArray(columns) || columns.length === 0) {
     return res.status(400).json({ code: 400, message: '导出列不能为空' });
@@ -428,8 +453,12 @@ router.post('/export', (req, res) => {
     params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
   }
   if (type) {
-    conditions.push('q.type LIKE ?');
-    params.push(`%${type}%`);
+    conditions.push('q.type = ?');
+    params.push(type);
+  }
+  if (category) {
+    conditions.push('q.category = ?');
+    params.push(category);
   }
   if (is_answered !== undefined && is_answered !== '-1' && is_answered !== '') {
     conditions.push('q.is_answered = ?');
@@ -454,7 +483,7 @@ router.post('/export', (req, res) => {
      FROM questions q
      LEFT JOIN users u1 ON q.creator_id = u1.id
      LEFT JOIN users u2 ON q.updater_id = u2.id
-     ${where} ORDER BY q.id DESC`
+     ${where} ORDER BY q.id DESC, q.rowid DESC`
   ).all(...params);
 
   // 列名映射

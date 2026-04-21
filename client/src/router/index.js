@@ -6,6 +6,8 @@ import Blockwords from '../views/Blockwords.vue';
 import Questions from '../views/Questions.vue';
 import AIConfig from '../views/AIConfig.vue';
 import AIGenerate from '../views/AIGenerate.vue';
+import Organizations from '../views/Organizations.vue';
+import Users from '../views/Users.vue';
 
 const routes = [
   { path: '/login', component: Login },
@@ -15,10 +17,12 @@ const routes = [
     redirect: '/dashboard',
     children: [
       { path: 'dashboard', component: Dashboard },
+      { path: 'ai-generate', component: AIGenerate },
       { path: 'blockwords', component: Blockwords },
       { path: 'questions', component: Questions },
       { path: 'settings', component: AIConfig },
-      { path: 'ai-generate', component: AIGenerate },
+      { path: 'organizations', component: Organizations },
+      { path: 'users', component: Users },
     ],
   },
 ];

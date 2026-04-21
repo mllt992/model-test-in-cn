@@ -19,10 +19,22 @@
           <template #icon><t-icon name="chat" /></template>
           测试题管理
         </t-menu-item>
-        <t-menu-item value="settings">
+        <t-submenu value="settings">
           <template #icon><t-icon name="setting" /></template>
-          系统设置
-        </t-menu-item>
+          <template #title>系统设置</template>
+          <t-menu-item value="settings">
+            <template #icon><t-icon name="app" /></template>
+            AI配置
+          </t-menu-item>
+          <t-menu-item value="organizations">
+            <template #icon><t-icon name="group" /></template>
+            组织管理
+          </t-menu-item>
+          <t-menu-item value="users">
+            <template #icon><t-icon name="user" /></template>
+            用户管理
+          </t-menu-item>
+        </t-submenu>
       </t-menu>
     </t-aside>
     <t-layout class="app-main">

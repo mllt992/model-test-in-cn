@@ -110,6 +110,7 @@
       </template>
       <template #action="{ row }">
         <t-button variant="text" size="small" theme="primary" @click="handleAIAnswer(row)" :loading="aiAnswerLoading[row.id]">AI回答</t-button>
+        <t-button variant="text" size="small" @click="handleViewOriginal(row)">查看原始内容</t-button>
         <t-button v-if="!isUserApproved(row)" variant="text" size="small" theme="success" @click="handleApprove(row)">同意</t-button>
         <t-button v-else variant="text" size="small" theme="warning" @click="handleRevokeApprove(row)">撤销同意</t-button>
         <t-button variant="text" size="small" @click="handleEdit(row)">编辑</t-button>
@@ -293,7 +294,11 @@
           </t-space>
         </t-form-item>
         <t-form-item>
-          <t-button type="submit" theme="primary" @click="handleExport" :loading="exporting">确认导出</t-button>
+          <t-button variant="outline" @click="handleStashExportConfig">
+            {{ hasSavedConfig ? '更新暂存' : '暂存配置' }}
+          </t-button>
+          <t-button v-if="hasSavedConfig" variant="text" size="small" style="margin-left: 8px" @click="handleClearExportConfig">清除暂存</t-button>
+          <t-button theme="primary" style="margin-left: 24px" @click="handleExport" :loading="exporting">确认导出</t-button>
         </t-form-item>
       </t-form>
     </t-dialog>
@@ -312,6 +317,27 @@
         <div style="text-align: right">
           <t-button variant="outline" @click="aiAnswerDialogVisible = false">关闭</t-button>
           <t-button theme="primary" style="margin-left: 12px" @click="handleReplaceAnswer" :disabled="!aiAnswerData.ai_answer">一键替换</t-button>
+        </div>
+      </t-space>
+    </t-dialog>
+
+    <!-- 查看原始内容弹窗 -->
+    <t-dialog v-model:visible="viewOriginalDialogVisible" header="查看原始内容" :footer="false" width="700px">
+      <t-space direction="vertical" style="width: 100%" :size="16">
+        <div class="original-section">
+          <h4 style="margin-bottom: 8px">题目</h4>
+          <div class="original-content">{{ viewOriginalData.question }}</div>
+        </div>
+        <div v-if="viewOriginalData.model_answer" class="original-section">
+          <h4 style="margin-bottom: 8px">模型回答</h4>
+          <div class="original-content">{{ viewOriginalData.model_answer }}</div>
+        </div>
+        <div v-if="viewOriginalData.remark" class="original-section">
+          <h4 style="margin-bottom: 8px">备注</h4>
+          <div class="original-content">{{ viewOriginalData.remark }}</div>
+        </div>
+        <div style="text-align: right">
+          <t-button variant="outline" @click="viewOriginalDialogVisible = false">关闭</t-button>
         </div>
       </t-space>
     </t-dialog>
@@ -473,7 +499,16 @@ const exportColumnOptions = [
   { value: 'updated_at', label: '更新时间' },
 ];
 
+const STORAGE_KEY_EXPORT_CONFIG = 'questions_export_config';
+const loadExportConfig = () => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_EXPORT_CONFIG);
+    return saved ? JSON.parse(saved) : null;
+  } catch { return null; }
+};
+
 const customExportLabels = ref({ ...exportDefaultLabels });
+const hasSavedConfig = ref(false);
 
 // 表格列配置
 const STORAGE_KEY_COLS = 'questions_table_columns';
@@ -539,6 +574,10 @@ const aiAnswerLoading = ref({});
 const aiAnswerData = ref({ ai_answer: '', old_answer: '' });
 const aiAnswerRowId = ref(null);
 
+// 查看原始内容
+const viewOriginalDialogVisible = ref(false);
+const viewOriginalData = ref({ question: '', model_answer: '', remark: '' });
+
 const handleAIAnswer = async (row) => {
   aiAnswerRowId.value = row.id;
   aiAnswerData.value = { ai_answer: '', old_answer: row.model_answer || '' };
@@ -566,6 +605,15 @@ const handleReplaceAnswer = async () => {
     aiAnswerDialogVisible.value = false;
     loadData();
   } catch {}
+};
+
+const handleViewOriginal = (row) => {
+  viewOriginalData.value = {
+    question: row.question || '',
+    model_answer: row.model_answer || '',
+    remark: row.remark || '',
+  };
+  viewOriginalDialogVisible.value = true;
 };
 
 // 同意/撤销同意
@@ -694,6 +742,8 @@ const resetSearch = () => {
   search.audit_names = '';
   pagination.page = 1;
   loadData();
+  loadTypeOptions();
+  loadCategoryOptions();
 };
 
 // 加载类型和类别选项
@@ -957,11 +1007,39 @@ const handleConfirmImport = async () => {
 
 // 导出
 const showExportDialog = () => {
+  // 加载已保存的配置
+  const saved = loadExportConfig();
+  if (saved) {
+    customExportLabels.value = saved.labels || { ...exportDefaultLabels };
+    selectedExportCols.value = saved.selectedCols || ['index', 'question', 'type', 'category', 'model_answer', 'is_refused', 'remark', 'audit_results'];
+    hasSavedConfig.value = true;
+  } else {
+    customExportLabels.value = { ...exportDefaultLabels };
+    hasSavedConfig.value = false;
+  }
   exportDialogVisible.value = true;
 };
 
 const toggleAllExportCols = (checked) => {
   selectedExportCols.value = checked ? exportColumnOptions.map((o) => o.value) : [];
+};
+
+const handleStashExportConfig = () => {
+  const config = {
+    labels: { ...customExportLabels.value },
+    selectedCols: [...selectedExportCols.value],
+  };
+  localStorage.setItem(STORAGE_KEY_EXPORT_CONFIG, JSON.stringify(config));
+  hasSavedConfig.value = true;
+  MessagePlugin.success('已暂存导出配置，下次打开自动恢复');
+};
+
+const handleClearExportConfig = () => {
+  localStorage.removeItem(STORAGE_KEY_EXPORT_CONFIG);
+  customExportLabels.value = { ...exportDefaultLabels };
+  selectedExportCols.value = ['index', 'question', 'type', 'category', 'model_answer', 'is_refused', 'remark', 'audit_results'];
+  hasSavedConfig.value = false;
+  MessagePlugin.success('已清除暂存的配置');
 };
 
 const handleExport = async () => {
@@ -1037,6 +1115,8 @@ onMounted(() => {
 .ai-section h4 { font-size: 14px; font-weight: 500; color: #333; }
 .ai-answer-box { padding: 12px; background: #f5f5f5; border-radius: 6px; white-space: pre-wrap; max-height: 300px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
 .ai-answer-new { background: #e6f7ff; border: 1px solid #91d5ff; }
+.original-section h4 { font-size: 14px; font-weight: 500; color: #333; }
+.original-content { padding: 12px; background: #f5f5f5; border-radius: 6px; white-space: pre-wrap; max-height: 400px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
 .dup-group { border: 1px solid #e7e7e7; border-radius: 6px; padding: 12px; }
 .dup-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .dup-question { font-weight: 500; font-size: 14px; color: #333; }
