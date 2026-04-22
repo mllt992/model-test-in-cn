@@ -442,7 +442,7 @@
     </t-dialog>
 
     <!-- 导出弹窗 -->
-    <t-dialog v-model:visible="exportDialogVisible" header="导出数据" width="500px">
+    <t-dialog v-model:visible="exportDialogVisible" header="导出数据" width="600px">
       <t-form label-width="80px">
         <t-form-item label="导出格式">
           <t-select v-model="exportFormat">
@@ -451,11 +451,30 @@
             <t-option value="json" label="JSON" />
           </t-select>
         </t-form-item>
-        <t-form-item label="选择导出列">
-          <t-space direction="vertical" style="width: 100%">
-            <t-checkbox v-model="selectAllExportCols" @change="toggleAllExportCols">全选</t-checkbox>
-            <t-checkbox-group v-model="selectedExportCols" :options="exportColumnOptions" />
-          </t-space>
+        <t-form-item label="导出字段">
+          <div class="export-fields-section">
+            <div class="export-fields-header">
+              <t-checkbox v-model="allExportColsSelected" @change="handleToggleAllExportCols">全选</t-checkbox>
+              <t-button variant="text" size="small" @click="resetExportOrder">重置</t-button>
+            </div>
+            <div class="export-fields-list">
+              <!-- 选中的字段（按排序顺序显示） -->
+              <div v-for="(fieldValue, idx) in exportSettings.selected" :key="fieldValue" class="export-field-item">
+                <t-checkbox :checked="true" @change="() => toggleExportCol(fieldValue)" />
+                <span class="field-label">{{ getFieldLabel(fieldValue) }}</span>
+                <t-space>
+                  <t-button variant="text" size="small" :icon="moveUpIcon" :disabled="idx === 0" @click="moveExportCol(fieldValue, -1)" />
+                  <t-button variant="text" size="small" :icon="moveDownIcon" :disabled="idx === exportSettings.selected.length - 1" @click="moveExportCol(fieldValue, 1)" />
+                </t-space>
+              </div>
+              <!-- 未选中的字段 -->
+              <div v-for="field in unselectedFields" :key="field.value" class="export-field-item unselected">
+                <t-checkbox :checked="false" @change="() => toggleExportCol(field.value)" />
+                <span class="field-label">{{ field.label }}</span>
+                <span class="field-not-selected">未选中</span>
+              </div>
+            </div>
+          </div>
         </t-form-item>
         <t-form-item>
           <t-button theme="primary" @click="handleExport" :loading="exporting">确认导出</t-button>
@@ -498,7 +517,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, reactive, computed, onMounted, onBeforeUnmount, h } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import { testResultsAPI, aiConfigAPI, questionsAPI } from '@/api';
 
@@ -1172,10 +1191,9 @@ const handleImportFromQuestions = async () => {
 // 导出
 const exportDialogVisible = ref(false);
 const exportFormat = ref('xlsx');
-const selectedExportCols = ref(['index', 'test_type', 'question', 'risk_type', 'risk_category', 'response_type', 'human_audit', 'remark']);
-const selectAllExportCols = ref(true);
 const exporting = ref(false);
 
+// 导出字段选项
 const exportColumnOptions = [
   { value: 'index', label: '序号' },
   { value: 'test_type', label: '测试类型' },
@@ -1192,25 +1210,151 @@ const exportColumnOptions = [
   { value: 'created_at', label: '创建时间' },
 ];
 
+// 导出字段顺序缓存
+const EXPORT_COLS_ORDER_KEY = 'model_test_export_cols_order';
+const defaultSelectedCols = ['index', 'test_type', 'question', 'risk_type', 'risk_category', 'response_type', 'human_audit', 'remark'];
+const allFieldKeys = exportColumnOptions.map(o => o.value);
+
+// 导出设置：selected 存储选中的字段，order 存储所有字段的顺序
+const exportSettings = reactive({ selected: [], order: [] });
+
+// 加载缓存的导出设置
+const loadExportSettings = () => {
+  try {
+    const cached = localStorage.getItem(EXPORT_COLS_ORDER_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && Array.isArray(parsed.order) && Array.isArray(parsed.selected)) {
+        // 验证 order 包含所有字段
+        const validOrder = parsed.order.filter(v => allFieldKeys.includes(v));
+        // 补充缺失的字段
+        allFieldKeys.forEach(f => {
+          if (!validOrder.includes(f)) validOrder.push(f);
+        });
+        // 验证 selected
+        const validSelected = parsed.selected.filter(v => allFieldKeys.includes(v));
+        return { selected: validSelected, order: validOrder };
+      }
+    }
+  } catch {}
+  return { selected: [...defaultSelectedCols], order: [...allFieldKeys] };
+};
+
+const savedSettings = loadExportSettings();
+exportSettings.selected = savedSettings.selected;
+exportSettings.order = savedSettings.order;
+
+// 保存导出设置到缓存
+const saveExportSettings = () => {
+  localStorage.setItem(EXPORT_COLS_ORDER_KEY, JSON.stringify({
+    selected: exportSettings.selected,
+    order: exportSettings.order
+  }));
+};
+
+// 检查字段是否选中
+const isExportColSelected = (fieldValue) => exportSettings.selected.includes(fieldValue);
+
+// 获取字段在已选中列表中的索引
+const getExportColIndex = (fieldValue) => {
+  return exportSettings.selected.indexOf(fieldValue);
+};
+
+// 获取已选中字段数量
+const getSelectedExportColsCount = () => exportSettings.selected.length;
+
+// 全选状态
+const allExportColsSelected = computed({
+  get: () => exportSettings.selected.length === exportColumnOptions.length,
+  set: (val) => {
+    if (val) {
+      exportSettings.selected = [...allFieldKeys];
+    } else {
+      exportSettings.selected = [];
+    }
+    saveExportSettings();
+  }
+});
+
+// 切换字段选中状态
+const toggleExportCol = (fieldValue) => {
+  const idx = exportSettings.selected.indexOf(fieldValue);
+  if (idx > -1) {
+    exportSettings.selected.splice(idx, 1);
+  } else {
+    exportSettings.selected.push(fieldValue);
+  }
+  saveExportSettings();
+};
+
+// 全选/取消全选
+const handleToggleAllExportCols = (checked) => {
+  if (checked) {
+    exportSettings.selected = [...allFieldKeys];
+  } else {
+    exportSettings.selected = [];
+  }
+  saveExportSettings();
+};
+
+// 移动导出字段
+const moveExportCol = (fieldValue, direction) => {
+  const idx = exportSettings.selected.indexOf(fieldValue);
+  if (idx === -1) return;
+
+  const newIdx = idx + direction;
+  if (newIdx < 0 || newIdx >= exportSettings.selected.length) return;
+
+  // 在 selected 数组中交换位置
+  const newSelected = [...exportSettings.selected];
+  [newSelected[idx], newSelected[newIdx]] = [newSelected[newIdx], newSelected[idx]];
+  exportSettings.selected = newSelected;
+  saveExportSettings();
+};
+
+// 重置为默认
+const resetExportOrder = () => {
+  exportSettings.selected = [...defaultSelectedCols];
+  exportSettings.order = [...allFieldKeys];
+  saveExportSettings();
+};
+
+// 获取字段标签
+const getFieldLabel = (fieldValue) => {
+  const option = exportColumnOptions.find(o => o.value === fieldValue);
+  return option ? option.label : fieldValue;
+};
+
+// 未选中的字段
+const unselectedFields = computed(() => {
+  return exportColumnOptions.filter(o => !exportSettings.selected.includes(o.value));
+});
+
+// TDesign 图标组件
+const moveUpIcon = () => h('svg', { width: '16', height: '16', viewBox: '0 0 16 16', fill: 'none' }, [
+  h('path', { d: 'M8 4L12 8M8 4L4 8M8 4V12', stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
+]);
+const moveDownIcon = () => h('svg', { width: '16', height: '16', viewBox: '0 0 16 16', fill: 'none' }, [
+  h('path', { d: 'M8 12L4 8M8 12L12 8M8 12V4', stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
+]);
+
 const showExportDialog = () => {
   exportDialogVisible.value = true;
 };
 
-const toggleAllExportCols = (checked) => {
-  selectedExportCols.value = checked ? exportColumnOptions.map(o => o.value) : [];
-};
-
 const handleExport = async () => {
-  if (!selectedExportCols.value.length) {
+  if (exportSettings.selected.size === 0) {
     MessagePlugin.warning('请至少选择一列');
     return;
   }
   exporting.value = true;
   try {
-    const columns = selectedExportCols.value.map(key => ({
-      key,
-      label: exportColumnOptions.find(o => o.value === key)?.label || key,
-    }));
+    // 只导出选中的字段，并按设置的顺序
+    const columns = exportSettings.selected
+      .map(key => ({
+        key,
+        label: exportColumnOptions.find(o => o.value === key)?.label || key,
+      }));
     const params = { columns, format: exportFormat.value };
     if (search.keyword) params.keyword = search.keyword;
     if (search.test_type) params.test_type = search.test_type;
@@ -1263,6 +1407,8 @@ const loadData = async () => {
   if (search.risk_type) params.risk_type = search.risk_type;
   if (search.risk_category) params.risk_category = search.risk_category;
   if (search.has_content !== '') params.has_content = search.has_content;
+
+  console.log('[DEBUG] loadData params:', JSON.stringify(params), 'search.is_refused:', search.is_refused, 'typeof:', typeof search.is_refused, 'search.has_content:', search.has_content, 'typeof:', typeof search.has_content);
 
   try {
     const res = await testResultsAPI.list(params);
@@ -1404,4 +1550,14 @@ onBeforeUnmount(() => {
 .generated-content-cell { cursor: pointer; }
 .generated-content-cell:hover { color: #0052d9; }
 .existing-question { color: #ccc; }
+.export-fields-section { width: 100%; }
+.export-fields-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 14px; color: #666; }
+.export-fields-list { border: 1px solid #e7e7e7; border-radius: 6px; max-height: 280px; overflow-y: auto; }
+.export-field-item { display: flex; align-items: center; padding: 8px 12px; border-bottom: 1px solid #f0f0f0; gap: 8px; }
+.export-field-item:last-child { border-bottom: none; }
+.export-field-item:hover { background: #f5f5f5; }
+.drag-handle { color: #bbb; cursor: grab; flex-shrink: 0; }
+.field-label { flex: 1; font-size: 14px; color: #333; }
+.field-not-selected { font-size: 12px; color: #bbb; margin-left: auto; }
+.export-field-item.unselected { opacity: 0.6; }
 </style>

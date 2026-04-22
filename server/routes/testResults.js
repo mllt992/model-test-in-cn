@@ -31,6 +31,8 @@ router.get('/', (req, res) => {
     pageSize = 10,
   } = req.query;
 
+  console.log('[DEBUG] GET /test-results query:', { is_refused, has_content, has_content_type: typeof has_content });
+
   const offset = (page - 1) * pageSize;
   const conditions = [];
   const params = [];

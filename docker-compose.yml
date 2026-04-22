@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  # 后端服务
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: model-test-server
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    volumes:
+      # 持久化数据库
+      - sqlite_data:/app/data
+      # 持久化上传文件
+      - uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # 前端服务
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: model-test-client
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      server:
+        condition: service_healthy
+
+volumes:
+  # SQLite 数据库文件
+  sqlite_data:
+    driver: local
+  # 上传文件
+  uploads:
+    driver: local
