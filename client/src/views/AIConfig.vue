@@ -296,20 +296,24 @@ const handleCopyConfig = async (row) => {
   } catch {}
 };
 
-const handleDeleteConfig = async (row) => {
-  const confirmed = await DialogPlugin.confirm({
+const handleDeleteConfig = (row) => {
+  const dialog = DialogPlugin.confirm({
     header: '确认删除',
     body: `确定删除配置"${row.name}"吗？`,
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
+    onConfirm: async () => {
+      dialog.destroy();
+      try {
+        await aiConfigAPI.delete(row.id);
+        MessagePlugin.success('删除成功');
+        loadConfigs();
+      } catch {}
+    },
+    onCancel: () => {
+      dialog.destroy();
+    },
   });
-  if (confirmed) {
-    try {
-      await aiConfigAPI.delete(row.id);
-      MessagePlugin.success('删除成功');
-      loadConfigs();
-    } catch {}
-  }
 };
 
 const testConnection = async () => {
@@ -412,20 +416,24 @@ const handleSkillSubmit = async ({ validateResult }) => {
   } catch {}
 };
 
-const handleDeleteSkill = async (row) => {
-  const confirmed = await DialogPlugin.confirm({
+const handleDeleteSkill = (row) => {
+  const dialog = DialogPlugin.confirm({
     header: '确认删除',
     body: `确定删除技能"${row.name}"吗？`,
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
+    onConfirm: async () => {
+      dialog.destroy();
+      try {
+        await aiConfigAPI.deleteSkill(row.id);
+        MessagePlugin.success('删除成功');
+        loadSkills();
+      } catch {}
+    },
+    onCancel: () => {
+      dialog.destroy();
+    },
   });
-  if (confirmed) {
-    try {
-      await aiConfigAPI.deleteSkill(row.id);
-      MessagePlugin.success('删除成功');
-      loadSkills();
-    } catch {}
-  }
 };
 
 const toggleSkill = async (row, val) => {
@@ -499,20 +507,24 @@ const handlePromptSubmit = async ({ validateResult }) => {
   } catch {}
 };
 
-const handleDeletePrompt = async (row) => {
-  const confirmed = await DialogPlugin.confirm({
+const handleDeletePrompt = (row) => {
+  const dialog = DialogPlugin.confirm({
     header: '确认删除',
     body: `确定删除Prompt"${row.name}"吗？`,
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
+    onConfirm: async () => {
+      dialog.destroy();
+      try {
+        await aiConfigAPI.deletePrompt(row.id);
+        MessagePlugin.success('删除成功');
+        loadPrompts();
+      } catch {}
+    },
+    onCancel: () => {
+      dialog.destroy();
+    },
   });
-  if (confirmed) {
-    try {
-      await aiConfigAPI.deletePrompt(row.id);
-      MessagePlugin.success('删除成功');
-      loadPrompts();
-    } catch {}
-  }
 };
 
 const togglePrompt = async (row, val) => {

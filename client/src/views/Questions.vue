@@ -385,7 +385,11 @@
               <t-tag theme="danger" variant="light" size="small">{{ group.count }}条重复</t-tag>
               <span class="dup-question">{{ group.question }}</span>
             </div>
-            <t-table :data="group.items" :columns="dupColumns" row-key="id" size="small" :max-height="200" />
+            <t-table :data="group.items" :columns="dupColumns" row-key="id" size="small" :max-height="200">
+                <template #action="{ row }">
+                  <t-radio :checked="keepIds[group.question] === row.id" @change="() => { keepIds[group.question] = row.id; }" />
+                </template>
+              </t-table>
           </div>
           <div style="text-align: right">
             <t-button variant="outline" @click="duplicateDialogVisible = false">关闭</t-button>
@@ -637,20 +641,6 @@ const handleRevokeApprove = async (row) => {
   } catch {}
 };
 
-const dupColumns = [
-  { colKey: 'id', title: 'ID', width: 60 },
-  { colKey: 'category', title: '类别', width: 100 },
-  { colKey: 'model_answer', title: '模型回答', ellipsis: true },
-  { colKey: 'created_at', title: '创建时间', width: 160 },
-  {
-    colKey: 'action', title: '保留', width: 60,
-    cell: (h, { row }) => h('t-radio', {
-      checked: keepIds.value[group.question] === row.id,
-      onChange: () => { keepIds.value[group.question] = row.id; }
-    })
-  },
-];
-
 // 重复检测
 const duplicateDialogVisible = ref(false);
 const duplicateLoading = ref(false);
@@ -661,6 +651,15 @@ const keepIds = ref({});
 const duplicateTotalExtra = computed(() => {
   return duplicateData.value.reduce((sum, g) => sum + g.count - 1, 0);
 });
+
+// 单选按钮列配置
+const dupColumns = [
+  { colKey: 'id', title: 'ID', width: 60 },
+  { colKey: 'category', title: '类别', width: 100 },
+  { colKey: 'model_answer', title: '模型回答', ellipsis: true },
+  { colKey: 'created_at', title: '创建时间', width: 160 },
+  { colKey: 'action', title: '保留', width: 60, slot: 'action' },
+];
 
 const showDuplicateDialog = async () => {
   duplicateLoading.value = true;
@@ -679,7 +678,7 @@ const showDuplicateDialog = async () => {
   }
 };
 
-const handleRemoveDuplicates = async () => {
+const handleRemoveDuplicates = () => {
   const deleteIds = [];
   duplicateData.value.forEach((g) => {
     const keepId = keepIds.value[g.question];
@@ -692,23 +691,29 @@ const handleRemoveDuplicates = async () => {
     return;
   }
 
-  const confirmed = await DialogPlugin.confirm({
+  const dialog = DialogPlugin.confirm({
     header: '确认删除',
     body: `确定删除 ${deleteIds.length} 条重复记录吗？每组将保留选中的那条。`,
     theme: 'warning',
     confirmBtn: { content: '确认删除', theme: 'danger' },
+    onConfirm: async () => {
+      dialog.destroy();
+      duplicateRemoving.value = true;
+      try {
+        await questionsAPI.removeDuplicates(deleteIds);
+        MessagePlugin.success(`成功删除 ${deleteIds.length} 条重复记录`);
+        duplicateDialogVisible.value = false;
+        loadData();
+      } catch (e) {
+        MessagePlugin.error('删除失败');
+      } finally {
+        duplicateRemoving.value = false;
+      }
+    },
+    onCancel: () => {
+      dialog.destroy();
+    },
   });
-  if (!confirmed) return;
-
-  duplicateRemoving.value = true;
-  try {
-    await questionsAPI.removeDuplicates(deleteIds);
-    MessagePlugin.success(`成功删除 ${deleteIds.length} 条重复记录`);
-    duplicateDialogVisible.value = false;
-    loadData();
-  } catch {} finally {
-    duplicateRemoving.value = false;
-  }
 };
 
 const loadData = async () => {
@@ -812,38 +817,48 @@ const handleSubmit = async ({ validateResult }) => {
   } catch {}
 };
 
-const handleDelete = async (row) => {
-  const confirmed = await DialogPlugin.confirm({
+const handleDelete = (row) => {
+  const dialog = DialogPlugin.confirm({
     header: '确认删除',
     body: '确定删除该题目吗？',
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
+    onConfirm: async () => {
+      dialog.destroy();
+      try {
+        await questionsAPI.delete(row.id);
+        MessagePlugin.success('删除成功');
+        loadData();
+      } catch {}
+    },
+    onCancel: () => {
+      dialog.destroy();
+    },
   });
-  if (!confirmed) return;
-  try {
-    await questionsAPI.delete(row.id);
-    MessagePlugin.success('删除成功');
-    loadData();
-  } catch {}
 };
 
 const handleSelectChange = (value) => {
   selectedRows.value = value;
 };
 
-const handleBatchDelete = async () => {
-  const confirmed = await DialogPlugin.confirm({
+const handleBatchDelete = () => {
+  const dialog = DialogPlugin.confirm({
     header: '批量删除',
     body: `确定删除选中的 ${selectedRows.value.length} 条记录吗？`,
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
+    onConfirm: async () => {
+      dialog.destroy();
+      try {
+        await questionsAPI.batchDelete({ ids: selectedRows.value });
+        MessagePlugin.success('批量删除成功');
+        loadData();
+      } catch {}
+    },
+    onCancel: () => {
+      dialog.destroy();
+    },
   });
-  if (!confirmed) return;
-  try {
-    await questionsAPI.batchDelete({ ids: selectedRows.value });
-    MessagePlugin.success('批量删除成功');
-    loadData();
-  } catch {}
 };
 
 // 批量设置类型

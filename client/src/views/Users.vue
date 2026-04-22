@@ -202,40 +202,49 @@ const handleSubmit = async ({ validateResult }) => {
   }
 };
 
-const handleDelete = async (row) => {
-  const confirmed = await DialogPlugin.confirm({
+const handleDelete = (row) => {
+  const dialog = DialogPlugin.confirm({
     header: '确认删除',
     body: `确定删除用户"${row.nickname}"吗？`,
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
+    onConfirm: async () => {
+      dialog.destroy();
+      try {
+        await userAPI.delete(row.id);
+        MessagePlugin.success('删除成功');
+        loadData();
+      } catch (e) {
+        MessagePlugin.error(e.message || '删除失败');
+      }
+    },
+    onCancel: () => {
+      dialog.destroy();
+    },
   });
-  if (!confirmed) return;
-  try {
-    await userAPI.delete(row.id);
-    MessagePlugin.success('删除成功');
-    loadData();
-  } catch (e) {
-    MessagePlugin.error(e.message || '删除失败');
-  }
 };
 
-const handleBatchDelete = async () => {
-  const confirmed = await DialogPlugin.confirm({
+const handleBatchDelete = () => {
+  const dialog = DialogPlugin.confirm({
     header: '批量删除',
     body: `确定删除选中的 ${selectedRows.value.length} 个用户吗？`,
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
+    onConfirm: async () => {
+      dialog.destroy();
+      try {
+        await Promise.all(selectedRows.value.map(id => userAPI.delete(id)));
+        MessagePlugin.success('批量删除成功');
+        selectedRows.value = [];
+        loadData();
+      } catch (e) {
+        MessagePlugin.error(e.message || '删除失败');
+      }
+    },
+    onCancel: () => {
+      dialog.destroy();
+    },
   });
-  if (!confirmed) return;
-
-  try {
-    await Promise.all(selectedRows.value.map(id => userAPI.delete(id)));
-    MessagePlugin.success('批量删除成功');
-    selectedRows.value = [];
-    loadData();
-  } catch (e) {
-    MessagePlugin.error(e.message || '删除失败');
-  }
 };
 
 onMounted(() => {

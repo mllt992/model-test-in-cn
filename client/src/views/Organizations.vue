@@ -258,21 +258,26 @@ const handleView = async (row) => {
   }
 };
 
-const handleDelete = async (row) => {
-  const confirmed = await DialogPlugin.confirm({
+const handleDelete = (row) => {
+  const dialog = DialogPlugin.confirm({
     header: '确认删除',
     body: `确定删除组织"${row.name}"吗？`,
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
+    onConfirm: async () => {
+      dialog.destroy();
+      try {
+        await organizationAPI.delete(row.id);
+        MessagePlugin.success('删除成功');
+        loadData();
+      } catch (e) {
+        MessagePlugin.error(e.message || '删除失败');
+      }
+    },
+    onCancel: () => {
+      dialog.destroy();
+    },
   });
-  if (!confirmed) return;
-  try {
-    await organizationAPI.delete(row.id);
-    MessagePlugin.success('删除成功');
-    loadData();
-  } catch (e) {
-    MessagePlugin.error(e.message || '删除失败');
-  }
 };
 
 const handleManageMembers = async (row) => {
@@ -321,22 +326,27 @@ const handleAddMember = async () => {
   }
 };
 
-const handleRemoveMember = async (row) => {
-  const confirmed = await DialogPlugin.confirm({
+const handleRemoveMember = (row) => {
+  const dialog = DialogPlugin.confirm({
     header: '确认移除',
     body: `确定将用户"${row.nickname}"移出组织吗？`,
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
+    onConfirm: async () => {
+      dialog.destroy();
+      try {
+        await organizationAPI.removeMember(currentOrg.value.id, row.id);
+        MessagePlugin.success('移除成功');
+        const res = await organizationAPI.getMembers(currentOrg.value.id);
+        members.value = res.data;
+      } catch (e) {
+        MessagePlugin.error(e.message || '移除失败');
+      }
+    },
+    onCancel: () => {
+      dialog.destroy();
+    },
   });
-  if (!confirmed) return;
-  try {
-    await organizationAPI.removeMember(currentOrg.value.id, row.id);
-    MessagePlugin.success('移除成功');
-    const res = await organizationAPI.getMembers(currentOrg.value.id);
-    members.value = res.data;
-  } catch (e) {
-    MessagePlugin.error(e.message || '移除失败');
-  }
 };
 
 onMounted(() => {

@@ -162,38 +162,46 @@ const handleSubmit = async ({ validateResult }) => {
   } catch {}
 };
 
-const handleDelete = async (row) => {
-  const confirmed = await DialogPlugin.confirm({
+const handleDelete = (row) => {
+  const dialog = DialogPlugin.confirm({
     header: '确认删除',
     body: '确定删除该拦截词吗？',
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
+    onConfirm: async () => {
+      dialog.destroy();
+      try {
+        await blockwordsAPI.delete(row.id);
+        MessagePlugin.success('删除成功');
+        loadData();
+      } catch {}
+    },
+    onCancel: () => {
+      dialog.destroy();
+    },
   });
-  if (confirmed) {
-    try {
-      await blockwordsAPI.delete(row.id);
-      MessagePlugin.success('删除成功');
-      loadData();
-    } catch {}
-  }
 };
 
-const handleBatchDelete = async () => {
-  const confirmed = await DialogPlugin.confirm({
+const handleBatchDelete = () => {
+  const dialog = DialogPlugin.confirm({
     header: '批量删除',
     body: `确定删除选中的 ${selectedRows.value.length} 条记录吗？`,
     theme: 'warning',
     confirmBtn: { content: '确认', theme: 'danger' },
+    onConfirm: async () => {
+      dialog.destroy();
+      try {
+        for (const id of selectedRows.value) {
+          await blockwordsAPI.delete(id);
+        }
+        MessagePlugin.success('批量删除成功');
+        loadData();
+      } catch {}
+    },
+    onCancel: () => {
+      dialog.destroy();
+    },
   });
-  if (confirmed) {
-    try {
-      for (const id of selectedRows.value) {
-        await blockwordsAPI.delete(id);
-      }
-      MessagePlugin.success('批量删除成功');
-      loadData();
-    } catch {}
-  }
 };
 
 onMounted(loadData);
