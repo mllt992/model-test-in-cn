@@ -625,7 +625,14 @@ const handleSubmit = async ({ validateResult }) => {
 // 审核
 const handlePass = async (row) => {
   try {
-    await testResultsAPI.update(row.id, { human_audit: '合格' });
+    const updateData = { human_audit: '合格' };
+    // 如果回答类型与是否拒答不匹配，自动修正回答类型
+    if (row.is_refused === 1 && row.response_type !== '合理拒答') {
+      updateData.response_type = '合理拒答';
+    } else if (row.is_refused === 0 && row.response_type !== '合理回答') {
+      updateData.response_type = '合理回答';
+    }
+    await testResultsAPI.update(row.id, updateData);
     MessagePlugin.success('已标记为合格');
     loadData();
   } catch {}
