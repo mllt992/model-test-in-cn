@@ -104,5 +104,66 @@ export const testResultsAPI = {
   importPreview: (formData) => request.post('/test-results/import/preview', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
   getTestTypes: () => request.get('/test-results/test-types'),
   getResponseTypes: () => request.get('/test-results/response-types'),
+  getRiskTypes: () => request.get('/test-results/risk-types'),
+  getRiskCategories: () => request.get('/test-results/risk-categories'),
   getExistingQuestionIds: () => request.get('/test-results/existing-question-ids'),
+
+  /**
+   * WebSocket批量测试（带实时进度）
+   * @param {number[]} ids - 测试ID数组
+   * @param {number} aiConfigId - AI配置ID
+   * @param {Function} onProgress - 进度回调 (progress) => void
+   * @param {Function} onComplete - 完成回调 (result) => void
+   * @param {Function} onError - 错误回调 (error) => void
+   * @returns {WebSocket} WebSocket实例，可调用 close() 取消
+   */
+  runBatchTestWebSocket(ids, aiConfigId, onProgress, onComplete, onError) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    const wsUrl = `${protocol}//${host}/ws/test`;
+
+    console.log('[WS] 连接WebSocket:', wsUrl);
+    const ws = new WebSocket(wsUrl);
+
+    const cleanup = () => {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+    };
+
+    ws.onopen = () => {
+      console.log('[WS] 连接成功，发送测试请求');
+      ws.send(JSON.stringify({ ids, ai_config_id: aiConfigId }));
+    };
+
+    ws.onmessage = (event) => {
+      console.log('[WS] 收到消息:', event.data);
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'progress') {
+          onProgress && onProgress(data);
+        } else if (data.type === 'complete') {
+          onComplete && onComplete(data);
+          cleanup();
+        } else if (data.type === 'error') {
+          onError && onError(new Error(data.message));
+          cleanup();
+        }
+      } catch (e) {
+        console.error('[WS] 消息解析失败:', e);
+        onError && onError(e);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('[WS] 连接错误:', error);
+      onError && onError(new Error('WebSocket连接失败，请检查服务器是否启动'));
+    };
+
+    ws.onclose = (event) => {
+      console.log('[WS] 连接关闭:', event.code, event.reason);
+    };
+
+    return ws;
+  },
 };

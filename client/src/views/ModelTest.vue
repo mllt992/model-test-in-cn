@@ -8,6 +8,12 @@
       <t-select v-model="search.test_type" placeholder="测试类型" clearable filterable style="width: 140px">
         <t-option v-for="t in testTypeOptions" :key="t" :value="t" :label="t" />
       </t-select>
+      <t-select v-model="search.risk_type" placeholder="安全风险项" clearable filterable style="width: 140px" @focus="loadRiskTypeOptions">
+        <t-option v-for="t in riskTypeOptions" :key="t" :value="t" :label="t" />
+      </t-select>
+      <t-select v-model="search.risk_category" placeholder="风险类别" clearable filterable style="width: 140px" @focus="loadRiskCategoryOptions">
+        <t-option v-for="c in riskCategoryOptions" :key="c" :value="c" :label="c" />
+      </t-select>
       <t-select v-model="search.response_type" placeholder="回答类型" clearable filterable style="width: 140px">
         <t-option value="合理回答" label="合理回答" />
         <t-option value="合理拒答" label="合理拒答" />
@@ -51,9 +57,10 @@
           <template #icon><t-icon name="library" /></template>
           选择题库
         </t-button>
-        <t-button theme="primary" @click="runSelectedTests" :loading="runningTests" :disabled="!selectedRows.length">
+        <t-button theme="primary" @click="runSelectedTests" :loading="runningTests" :disabled="!selectedRows.length && !runningTests">
           <template #icon><t-icon name="play" /></template>
-          开始测试 ({{ selectedRows.length }})
+          <span v-if="runningTests && testProgress.total > 0">测试中 ({{ testProgress.current }}/{{ testProgress.total }})</span>
+          <span v-else>开始测试 ({{ selectedRows.length }})</span>
         </t-button>
         <t-button variant="outline" @click="showExportDialog">
           <template #icon><t-icon name="download" /></template>
@@ -124,9 +131,7 @@
           <span v-else style="color: #bbb">-</span>
         </template>
         <template #generated_content="{ row }">
-          <t-tooltip :content="row.generated_content || '暂无'" :disabled="!row.generated_content">
-            <span class="generated-content-cell">{{ row.generated_content || '-' }}</span>
-          </t-tooltip>
+          <span class="generated-content-cell">{{ row.generated_content || '-' }}</span>
         </template>
         <template #response_type="{ row }">
           <t-tag :theme="getResponseTypeTheme(row.response_type)" variant="outline">
@@ -472,7 +477,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue';
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next';
 import { testResultsAPI, aiConfigAPI, questionsAPI } from '@/api';
 
@@ -486,6 +491,8 @@ const search = reactive({
   is_refused: '',
   match_result: '',
   human_audit: '',
+  risk_type: '',
+  risk_category: '',
 });
 
 const tableData = ref([]);
@@ -501,6 +508,10 @@ const stats = reactive({
   match_count: 0,
   match_rate: '0%',
 });
+
+// 搜索选项
+const riskTypeOptions = ref([]);
+const riskCategoryOptions = ref([]);
 
 // AI配置
 const aiConfigList = ref([]);
@@ -629,6 +640,8 @@ const handleFieldChange = async (row, field) => {
 // 运行测试
 const runningTests = ref(false);
 const runningIds = ref([]);
+const testProgress = ref({ current: 0, total: 0 }); // WebSocket进度
+let testWs = null; // WebSocket实例
 
 const runSingleTest = async (row) => {
   if (!selectedAiConfig.value) {
@@ -656,16 +669,49 @@ const runSelectedTests = async () => {
     MessagePlugin.warning('请先选择AI渠道');
     return;
   }
+
   runningTests.value = true;
-  try {
-    const res = await testResultsAPI.runBatchTest(selectedRows.value, selectedAiConfig.value);
-    MessagePlugin.success(res.message);
-    loadData();
-  } catch (e) {
-    MessagePlugin.error(e?.response?.data?.message || '批量测试失败');
-  } finally {
-    runningTests.value = false;
-  }
+  testProgress.value = { current: 0, total: selectedRows.value.length };
+
+  testWs = testResultsAPI.runBatchTestWebSocket(
+    selectedRows.value,
+    selectedAiConfig.value,
+    // onProgress
+    (progress) => {
+      testProgress.value = { current: progress.current, total: progress.total };
+      // 更新对应行的状态
+      const row = tableData.value.find(r => r.id === progress.id);
+      if (row) {
+        row.generated_content = progress.generated_content || '';
+        row.response_type = progress.response_type || '';
+        runningIds.value.push(progress.id);
+        setTimeout(() => {
+          runningIds.value = runningIds.value.filter(id => id !== progress.id);
+        }, 300);
+      }
+    },
+    // onComplete
+    (result) => {
+      runningTests.value = false;
+      testProgress.value = { current: 0, total: 0 };
+      MessagePlugin.success(`测试完成: ${result.success}/${result.total} 成功`);
+      loadData();
+    },
+    // onError - WebSocket失败时回退到HTTP请求
+    async (error) => {
+      console.warn('[测试] WebSocket失败，回退到HTTP请求:', error.message);
+      try {
+        const res = await testResultsAPI.runBatchTest(selectedRows.value, selectedAiConfig.value);
+        MessagePlugin.success(res.message);
+        loadData();
+      } catch (e) {
+        MessagePlugin.error(e?.response?.data?.message || '批量测试失败');
+      } finally {
+        runningTests.value = false;
+        testProgress.value = { current: 0, total: 0 };
+      }
+    }
+  );
 };
 
 const handleAiConfigChange = () => {
@@ -1128,6 +1174,8 @@ const handleExport = async () => {
     if (search.is_refused !== '') params.is_refused = search.is_refused;
     if (search.match_result) params.match_result = search.match_result;
     if (search.human_audit) params.human_audit = search.human_audit;
+    if (search.risk_type) params.risk_type = search.risk_type;
+    if (search.risk_category) params.risk_category = search.risk_category;
 
     const res = await testResultsAPI.export(params);
 
@@ -1167,6 +1215,8 @@ const loadData = async () => {
   if (search.is_refused !== '') params.is_refused = search.is_refused;
   if (search.match_result) params.match_result = search.match_result;
   if (search.human_audit) params.human_audit = search.human_audit;
+  if (search.risk_type) params.risk_type = search.risk_type;
+  if (search.risk_category) params.risk_category = search.risk_category;
 
   try {
     const res = await testResultsAPI.list(params);
@@ -1186,6 +1236,8 @@ const resetSearch = () => {
   search.is_refused = '';
   search.match_result = '';
   search.human_audit = '';
+  search.risk_type = '';
+  search.risk_category = '';
   pagination.page = 1;
   loadData();
 };
@@ -1198,6 +1250,24 @@ const loadTestTypeOptions = async () => {
   } catch {}
 };
 
+// 加载安全风险项选项（懒加载，点击下拉时触发）
+const loadRiskTypeOptions = async () => {
+  if (riskTypeOptions.value.length > 0) return; // 已加载
+  try {
+    const res = await testResultsAPI.getRiskTypes();
+    riskTypeOptions.value = res.data || [];
+  } catch {}
+};
+
+// 加载风险类别选项（懒加载，点击下拉时触发）
+const loadRiskCategoryOptions = async () => {
+  if (riskCategoryOptions.value.length > 0) return; // 已加载
+  try {
+    const res = await testResultsAPI.getRiskCategories();
+    riskCategoryOptions.value = res.data || [];
+  } catch {}
+};
+
 // 回答类型主题
 const getResponseTypeTheme = (type) => {
   switch (type) {
@@ -1206,6 +1276,12 @@ const getResponseTypeTheme = (type) => {
     case '异常回复': return 'danger';
     default: return 'default';
   }
+};
+
+// 过滤图片标记，返回纯文本
+const stripImageTags = (content) => {
+  if (!content) return '';
+  return content.replace(/\[Image:\s*source:\s*[^\]]+\]/g, '').trim();
 };
 
 // 匹配结果判断
@@ -1230,6 +1306,14 @@ onMounted(() => {
   loadData();
   loadAiConfig();
   loadTestTypeOptions();
+});
+
+onBeforeUnmount(() => {
+  // 清理WebSocket连接
+  if (testWs) {
+    testWs.close();
+    testWs = null;
+  }
 });
 </script>
 
