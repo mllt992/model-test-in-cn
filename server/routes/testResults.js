@@ -26,6 +26,7 @@ router.get('/', (req, res) => {
     ai_model,
     risk_type,
     risk_category,
+    has_content,
     page = 1,
     pageSize = 10,
   } = req.query;
@@ -52,9 +53,19 @@ router.get('/', (req, res) => {
   }
   if (match_result) {
     if (match_result === '匹配') {
-      conditions.push('((t.is_refused = 1 AND t.response_type = "合理拒答") OR (t.is_refused = 0 AND t.response_type = "合理回答"))');
+      conditions.push("((t.is_refused = 1 AND t.response_type = '合理拒答') OR (t.is_refused = 0 AND t.response_type = '合理回答'))");
     } else if (match_result === '不匹配') {
-      conditions.push('NOT ((t.is_refused = 1 AND t.response_type = "合理拒答") OR (t.is_refused = 0 AND t.response_type = "合理回答"))');
+      conditions.push("NOT ((t.is_refused = 1 AND t.response_type = '合理拒答') OR (t.is_refused = 0 AND t.response_type = '合理回答'))");
+    } else if (match_result === '无') {
+      // 无：is_refused 为 NULL/-1/空 或 response_type 为空
+      conditions.push("(t.is_refused IS NULL OR t.is_refused = -1 OR t.response_type IS NULL OR t.response_type = '')");
+    }
+  }
+  if (has_content !== undefined && has_content !== '') {
+    if (has_content === '1') {
+      conditions.push("t.generated_content IS NOT NULL AND t.generated_content != ''");
+    } else if (has_content === '0') {
+      conditions.push("(t.generated_content IS NULL OR t.generated_content = '')");
     }
   }
   if (human_audit) {
@@ -523,7 +534,7 @@ const { judgeResponseType } = require('../utils/ai');
 
 // ========== 导出测试结果 ==========
 router.post('/export', (req, res) => {
-  const { columns, format = 'xlsx', keyword, test_type, response_type, is_refused, match_result, human_audit, ai_config_id, ai_model, risk_type, risk_category } = req.body;
+  const { columns, format = 'xlsx', keyword, test_type, response_type, is_refused, match_result, human_audit, ai_config_id, ai_model, risk_type, risk_category, has_content } = req.body;
 
   if (!columns || !Array.isArray(columns) || columns.length === 0) {
     return res.status(400).json({ code: 400, message: '导出列不能为空' });
@@ -549,9 +560,18 @@ router.post('/export', (req, res) => {
   }
   if (match_result) {
     if (match_result === '匹配') {
-      conditions.push('((t.is_refused = 1 AND t.response_type = "合理拒答") OR (t.is_refused = 0 AND t.response_type = "合理回答"))');
+      conditions.push("((t.is_refused = 1 AND t.response_type = '合理拒答') OR (t.is_refused = 0 AND t.response_type = '合理回答'))");
     } else if (match_result === '不匹配') {
-      conditions.push('NOT ((t.is_refused = 1 AND t.response_type = "合理拒答") OR (t.is_refused = 0 AND t.response_type = "合理回答"))');
+      conditions.push("NOT ((t.is_refused = 1 AND t.response_type = '合理拒答') OR (t.is_refused = 0 AND t.response_type = '合理回答'))");
+    } else if (match_result === '无') {
+      conditions.push("(t.is_refused IS NULL OR t.is_refused = -1 OR t.response_type IS NULL OR t.response_type = '')");
+    }
+  }
+  if (has_content !== undefined && has_content !== '') {
+    if (has_content === '1') {
+      conditions.push("t.generated_content IS NOT NULL AND t.generated_content != ''");
+    } else if (has_content === '0') {
+      conditions.push("(t.generated_content IS NULL OR t.generated_content = '')");
     }
   }
   if (human_audit) {

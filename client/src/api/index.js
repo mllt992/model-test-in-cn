@@ -112,12 +112,13 @@ export const testResultsAPI = {
    * WebSocket批量测试（带实时进度）
    * @param {number[]} ids - 测试ID数组
    * @param {number} aiConfigId - AI配置ID
+   * @param {number} concurrency - 并发数
    * @param {Function} onProgress - 进度回调 (progress) => void
    * @param {Function} onComplete - 完成回调 (result) => void
    * @param {Function} onError - 错误回调 (error) => void
    * @returns {WebSocket} WebSocket实例，可调用 close() 取消
    */
-  runBatchTestWebSocket(ids, aiConfigId, onProgress, onComplete, onError) {
+  runBatchTestWebSocket(ids, aiConfigId, concurrency, onProgress, onComplete, onError) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     const wsUrl = `${protocol}//${host}/ws/test`;
@@ -133,7 +134,7 @@ export const testResultsAPI = {
 
     ws.onopen = () => {
       console.log('[WS] 连接成功，发送测试请求');
-      ws.send(JSON.stringify({ ids, ai_config_id: aiConfigId }));
+      ws.send(JSON.stringify({ ids, ai_config_id: aiConfigId, concurrency }));
     };
 
     ws.onmessage = (event) => {

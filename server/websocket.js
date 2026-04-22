@@ -611,7 +611,7 @@ async function nonStreamAIResponse(apiUrl, headers, body, protocol) {
  * 处理模型测试请求（WebSocket批量测试）
  */
 async function handleTestRequest(ws, data) {
-  const { ids = [], ai_config_id } = data;
+  const { ids = [], ai_config_id, concurrency = 1 } = data;
 
   if (!Array.isArray(ids) || ids.length === 0) {
     ws.send(JSON.stringify({ type: 'error', message: '请选择要测试的记录' }));
@@ -633,27 +633,20 @@ async function handleTestRequest(ws, data) {
     return;
   }
 
+  const testConcurrency = Math.min(Math.max(1, Number(concurrency)), 10);
   console.log('[WS-Test] 使用配置:', aiConfig.name, aiConfig.protocol, aiConfig.model);
-  console.log('[WS-Test] 测试数量:', ids.length);
+  console.log('[WS-Test] 测试数量:', ids.length, '并发数:', testConcurrency);
 
   const baseUrl = aiConfig.api_base_url.replace(/\/+$/, '');
   let completedCount = 0;
   let successCount = 0;
+  const results = [];
 
-  // 串行执行每个测试
-  for (const id of ids) {
+  // 执行单个测试任务
+  const executeTest = async (id) => {
     const row = db.prepare('SELECT * FROM test_results WHERE id = ?').get(id);
     if (!row) {
-      completedCount++;
-      ws.send(JSON.stringify({
-        type: 'progress',
-        current: completedCount,
-        total: ids.length,
-        id,
-        success: false,
-        message: '记录不存在',
-      }));
-      continue;
+      return { id, success: false, message: '记录不存在' };
     }
 
     const prompt = row.question;
@@ -721,22 +714,43 @@ async function handleTestRequest(ws, data) {
       WHERE id = ?
     `).run(aiAnswer, responseType, aiConfig.id, aiConfig.name, aiConfig.model, id);
 
-    completedCount++;
-    ws.send(JSON.stringify({
-      type: 'progress',
-      current: completedCount,
-      total: ids.length,
-      id,
-      success,
-      generated_content: aiAnswer,
-      response_type: responseType,
-    }));
+    return { id, success, generated_content: aiAnswer, response_type: responseType };
+  };
 
-    // 添加延迟避免API限流
-    if (completedCount < ids.length) {
-      await new Promise(resolve => setTimeout(resolve, 500));
+  // 并发控制：分批执行
+  const runTests = async () => {
+    const total = ids.length;
+
+    // 将ID分成多个批次
+    const batches = [];
+    for (let i = 0; i < ids.length; i += testConcurrency) {
+      batches.push(ids.slice(i, i + testConcurrency));
     }
-  }
+
+    for (const batch of batches) {
+      // 并发执行当前批次
+      const batchPromises = batch.map(id => executeTest(id));
+      const batchResults = await Promise.all(batchPromises);
+
+      // 发送每个结果
+      for (const result of batchResults) {
+        completedCount++;
+        ws.send(JSON.stringify({
+          type: 'progress',
+          current: completedCount,
+          total,
+          ...result,
+        }));
+      }
+
+      // 批次之间添加短暂延迟，避免API限流
+      if (batches.indexOf(batch) < batches.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+    }
+  };
+
+  await runTests();
 
   console.log('[WS-Test] 测试完成:', successCount, '/', ids.length);
   ws.send(JSON.stringify({

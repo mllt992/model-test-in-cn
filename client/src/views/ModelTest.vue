@@ -26,10 +26,15 @@
       <t-select v-model="search.match_result" placeholder="匹配" clearable filterable style="width: 100px">
         <t-option value="匹配" label="匹配" />
         <t-option value="不匹配" label="不匹配" />
+        <t-option value="无" label="无" />
       </t-select>
       <t-select v-model="search.human_audit" placeholder="人工审核" clearable style="width: 120px">
         <t-option value="合格" label="合格" />
         <t-option value="不合格" label="不合格" />
+      </t-select>
+      <t-select v-model="search.has_content" placeholder="是否有生成内容" clearable style="width: 140px">
+        <t-option value="1" label="有" />
+        <t-option value="0" label="无" />
       </t-select>
       <t-button theme="primary" @click="loadData">搜索</t-button>
       <t-button variant="outline" @click="resetSearch">重置</t-button>
@@ -45,6 +50,13 @@
           <t-option value="文本生成" label="文本生成" />
           <t-option value="图像生成" label="图像生成" />
           <t-option value="多模态" label="多模态" />
+        </t-select>
+        <t-select v-model="concurrency" placeholder="并发数" style="width: 100px" @change="saveConcurrency">
+          <t-option :value="1" label="并发 1" />
+          <t-option :value="2" label="并发 2" />
+          <t-option :value="3" label="并发 3" />
+          <t-option :value="5" label="并发 5" />
+          <t-option :value="10" label="并发 10" />
         </t-select>
       </t-space>
 
@@ -502,6 +514,7 @@ const search = reactive({
   human_audit: '',
   risk_type: '',
   risk_category: '',
+  has_content: '',
 });
 
 const tableData = ref([]);
@@ -526,6 +539,13 @@ const riskCategoryOptions = ref([]);
 const aiConfigList = ref([]);
 const selectedAiConfig = ref(null);
 const testType = ref('文本生成');
+const CONCURRENCY_KEY = 'model_test_concurrency';
+const defaultConcurrency = 3;
+const concurrency = ref(Number(localStorage.getItem(CONCURRENCY_KEY)) || defaultConcurrency);
+
+const saveConcurrency = () => {
+  localStorage.setItem(CONCURRENCY_KEY, String(concurrency.value));
+};
 
 // 测试类型选项
 const testTypeOptions = ref([]);
@@ -686,12 +706,14 @@ const runSelectedTests = async () => {
     return;
   }
 
+  console.log('[Test] 开始批量测试，选中', selectedRows.value.length, '条，AI渠道ID:', selectedAiConfig.value, '并发数:', concurrency.value);
   runningTests.value = true;
   testProgress.value = { current: 0, total: selectedRows.value.length };
 
   testWs = testResultsAPI.runBatchTestWebSocket(
     selectedRows.value,
     selectedAiConfig.value,
+    concurrency.value,
     // onProgress
     (progress) => {
       testProgress.value = { current: progress.current, total: progress.total };
@@ -1198,6 +1220,7 @@ const handleExport = async () => {
     if (search.human_audit) params.human_audit = search.human_audit;
     if (search.risk_type) params.risk_type = search.risk_type;
     if (search.risk_category) params.risk_category = search.risk_category;
+    if (search.has_content !== '') params.has_content = search.has_content;
 
     const res = await testResultsAPI.export(params);
 
@@ -1239,6 +1262,7 @@ const loadData = async () => {
   if (search.human_audit) params.human_audit = search.human_audit;
   if (search.risk_type) params.risk_type = search.risk_type;
   if (search.risk_category) params.risk_category = search.risk_category;
+  if (search.has_content !== '') params.has_content = search.has_content;
 
   try {
     const res = await testResultsAPI.list(params);
@@ -1260,6 +1284,7 @@ const resetSearch = () => {
   search.human_audit = '';
   search.risk_type = '';
   search.risk_category = '';
+  search.has_content = '';
   pagination.page = 1;
   loadData();
 };
