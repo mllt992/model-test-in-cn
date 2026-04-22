@@ -401,12 +401,10 @@ const handleGenerate = async () => {
     ws = null;
   }
 
-  // 开始新的生成时清除旧缓存
-  clearResultsCache();
-
+  // 不清除旧缓存，追加新结果
+  const existingCount = results.value.length;
   generating.value = true;
   generatingProgress.value = { current: 0, total: config.count };
-  results.value = [];
 
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsHost = window.location.host;

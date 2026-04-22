@@ -121,11 +121,7 @@ async function handleGenerateRequest(ws, data) {
         systemPrompt
       );
 
-      // 为每个结果添加原始内容
-      for (const result of results) {
-        result.rawContent = content;
-      }
-
+      // generateBatch 内部已添加 rawContent
       // 按顺序推送每个结果
       for (let i = 0; i < results.length; i++) {
         completedCount++;
@@ -260,13 +256,13 @@ async function generateBatch(config, batchCount, type, category, is_refused, use
   try {
     content = await streamAIResponse(apiUrl, headers, requestBody, config.protocol);
     console.log(`[WS] 流式调用成功，内容长度: ${content.length}`);
-    console.log(`[WS] AI原始响应前200字符: ${content.substring(0, 200)}`);
+    console.log(`[WS] AI原始响应: ${content.substring(0, 500)}`);
   } catch (streamErr) {
     console.log(`[WS] 流式调用失败，尝试非流式: ${streamErr.message}`);
     try {
       content = await nonStreamAIResponse(apiUrl, headers, requestBody, config.protocol);
       console.log(`[WS] 非流式调用成功，内容长度: ${content.length}`);
-      console.log(`[WS] AI原始响应前200字符: ${content.substring(0, 200)}`);
+      console.log(`[WS] AI原始响应: ${content.substring(0, 500)}`);
     } catch (nonStreamErr) {
       console.error(`[WS] 非流式调用也失败: ${nonStreamErr.message}`);
       throw nonStreamErr;
@@ -350,6 +346,49 @@ function parseBatchContent(content, expectedCount, type, category, is_refused) {
           }
         }
       } catch (e) {}
+    }
+  }
+
+  // 如果仍然不够，尝试宽松解析（处理 AI 输出格式异常的情况）
+  if (results.length < expectedCount) {
+    // 尝试匹配 question 和 answer 字段（即使格式不规范）
+    const questionMatch = cleanContent.match(/"question"\s*[:：]\s*"([^"]*(?:\\.[^"]*)*)"/);
+    const answerMatch = cleanContent.match(/"answer"\s*[:：]\s*"([^"]*(?:\\.[^"]*)*)"/);
+
+    if (questionMatch || answerMatch) {
+      const parsed = {
+        question: questionMatch ? questionMatch[1] : '',
+        answer: answerMatch ? answerMatch[1] : '',
+        is_refused: defaultRefused,
+        type,
+        category
+      };
+      // 解码转义字符
+      if (parsed.question) parsed.question = parsed.question.replace(/\\"/g, '"').replace(/\\n/g, '\n');
+      if (parsed.answer) parsed.answer = parsed.answer.replace(/\\"/g, '"').replace(/\\n/g, '\n');
+      if (parsed.question || parsed.answer) {
+        results.push(parsed);
+      }
+    }
+  }
+
+  // 极度宽松解析：处理 "question"后面直接跟值的情况（如 "question我想套取"）
+  if (results.length < expectedCount) {
+    // 匹配 "question" 后紧跟中文或无引号的情况
+    const looseQuestionMatch = cleanContent.match(/"question"\s*[:：]\s*([^{",]+)/);
+    const looseAnswerMatch = cleanContent.match(/"answer"\s*[:：]\s*([^{",]+)/);
+
+    if ((looseQuestionMatch || looseAnswerMatch) && !results.length) {
+      const parsed = {
+        question: looseQuestionMatch ? looseQuestionMatch[1].trim() : '',
+        answer: looseAnswerMatch ? looseAnswerMatch[1].trim() : '',
+        is_refused: defaultRefused,
+        type,
+        category
+      };
+      if (parsed.question || parsed.answer) {
+        results.push(parsed);
+      }
     }
   }
 
