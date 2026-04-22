@@ -349,18 +349,27 @@
     </t-dialog>
 
     <!-- 选择题库弹窗 -->
-    <t-dialog v-model:visible="selectQuestionsDialogVisible" header="选择题库" width="900px" :footer="false">
+    <t-dialog v-model:visible="selectQuestionsDialogVisible" header="选择题库" width="1000px" :footer="false">
       <t-space direction="vertical" style="width: 100%">
         <t-alert theme="info">从系统题库中选择题目作为测试数据</t-alert>
 
         <div class="search-bar">
-          <t-input v-model="questionSearch.keyword" placeholder="搜索题目" style="width: 200px" @enter="loadQuestions" />
-          <t-select v-model="questionSearch.type" placeholder="类型" clearable filterable style="width: 140px">
+          <t-input v-model="questionSearch.keyword" placeholder="题目/类别/模型回答" style="width: 200px" @enter="loadQuestions" />
+          <t-select v-model="questionSearch.type" placeholder="类型" clearable filterable style="width: 140px" @focus="loadQuestionOptions">
             <t-option v-for="t in questionTypeOptions" :key="t" :value="t" :label="t" />
           </t-select>
-          <t-select v-model="questionSearch.category" placeholder="类别" clearable filterable style="width: 140px">
+          <t-select v-model="questionSearch.category" placeholder="类别" clearable filterable style="width: 140px" @focus="loadQuestionOptions">
             <t-option v-for="c in questionCategoryOptions" :key="c" :value="c" :label="c" />
           </t-select>
+          <t-select v-model="questionSearch.is_answered" placeholder="是否回答" clearable style="width: 120px">
+            <t-option value="0" label="未回答" />
+            <t-option value="1" label="已回答" />
+          </t-select>
+          <t-select v-model="questionSearch.is_refused" placeholder="是否拒答" clearable style="width: 100px">
+            <t-option value="0" label="否" />
+            <t-option value="1" label="是" />
+          </t-select>
+          <t-input v-model="questionSearch.audit_names" placeholder="审核人名字" style="width: 120px" @enter="loadQuestions" />
           <t-button theme="primary" @click="loadQuestions">搜索</t-button>
           <t-button variant="outline" @click="resetQuestionSearch">重置</t-button>
         </div>
@@ -915,7 +924,7 @@ const selectQuestionsDialogVisible = ref(false);
 const questionList = ref([]);
 const selectedQuestionIds = ref([]);
 const existingQuestionSet = ref(new Set()); // 已存在于test_results的题目
-const questionSearch = reactive({ keyword: '', type: '', category: '' });
+const questionSearch = reactive({ keyword: '', type: '', category: '', is_answered: '', is_refused: '', audit_names: '' });
 const questionPagination = reactive({ page: 1, pageSize: 10, total: 0 });
 const questionTypeOptions = ref([]);
 const questionCategoryOptions = ref([]);
@@ -968,6 +977,9 @@ const loadQuestions = async () => {
     if (questionSearch.keyword) params.keyword = questionSearch.keyword;
     if (questionSearch.type) params.type = questionSearch.type;
     if (questionSearch.category) params.category = questionSearch.category;
+    if (questionSearch.is_answered !== '') params.is_answered = questionSearch.is_answered;
+    if (questionSearch.is_refused !== '') params.is_refused = questionSearch.is_refused;
+    if (questionSearch.audit_names) params.audit_names = questionSearch.audit_names;
 
     const res = await questionsAPI.list(params);
     questionList.value = res.data.list;
@@ -990,6 +1002,9 @@ const resetQuestionSearch = () => {
   questionSearch.keyword = '';
   questionSearch.type = '';
   questionSearch.category = '';
+  questionSearch.is_answered = '';
+  questionSearch.is_refused = '';
+  questionSearch.audit_names = '';
   questionPagination.page = 1;
   loadQuestions();
 };
