@@ -29,6 +29,7 @@ app.use('/api/questions', require('./routes/questions'));
 app.use('/api/ai-config', require('./routes/aiConfig'));
 app.use('/api/stats', require('./routes/stats'));
 app.use('/api/ai-generate', require('./routes/aiGenerate'));
+app.use('/api/test-results', require('./routes/testResults'));
 
 // 健康检查
 app.get('/api/health', (req, res) => {

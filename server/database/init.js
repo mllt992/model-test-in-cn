@@ -104,6 +104,27 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS test_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    test_type TEXT DEFAULT '文本生成',
+    question TEXT NOT NULL,
+    risk_type TEXT DEFAULT '',
+    risk_category TEXT DEFAULT '',
+    is_refused INTEGER DEFAULT -1,
+    generated_content TEXT DEFAULT '',
+    response_type TEXT DEFAULT '',
+    human_audit TEXT DEFAULT '',
+    remark TEXT DEFAULT '',
+    ai_config_id INTEGER,
+    ai_config_name TEXT DEFAULT '',
+    ai_model TEXT DEFAULT '',
+    tester_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ai_config_id) REFERENCES ai_config(id),
+    FOREIGN KEY (tester_id) REFERENCES users(id)
+  );
 `);
 
 // 数据库迁移：新增字段（兼容已有数据）
@@ -128,6 +149,7 @@ migrate('ai_config', 'name', "TEXT NOT NULL DEFAULT '默认配置'");
 migrate('ai_config', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
 migrate('users', 'organization_id', 'INTEGER DEFAULT NULL');
 migrate('users', 'is_admin', 'INTEGER DEFAULT 0');
+migrate('test_results', 'is_refused', 'INTEGER DEFAULT -1');
 
 // 初始化管理员账号
 const existingUser = db.prepare('SELECT id, is_admin FROM users WHERE username = ?').get('xrilang');

@@ -11,6 +11,10 @@
           <template #icon><t-icon name="chat" /></template>
           AI生成
         </t-menu-item>
+        <t-menu-item value="model-test">
+          <template #icon><t-icon name="check-circle" /></template>
+          模型测试
+        </t-menu-item>
         <t-menu-item value="blockwords">
           <template #icon><t-icon name="filter" /></template>
           拦截词管理

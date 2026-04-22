@@ -8,6 +8,7 @@ import AIConfig from '../views/AIConfig.vue';
 import AIGenerate from '../views/AIGenerate.vue';
 import Organizations from '../views/Organizations.vue';
 import Users from '../views/Users.vue';
+import ModelTest from '../views/ModelTest.vue';
 
 const routes = [
   { path: '/login', component: Login },
@@ -18,6 +19,7 @@ const routes = [
     children: [
       { path: 'dashboard', component: Dashboard },
       { path: 'ai-generate', component: AIGenerate },
+      { path: 'model-test', component: ModelTest },
       { path: 'blockwords', component: Blockwords },
       { path: 'questions', component: Questions },
       { path: 'settings', component: AIConfig },

@@ -87,3 +87,22 @@ export const userAPI = {
   delete: (id) => request.delete(`/auth/users/${id}`),
   getOrganizations: () => request.get('/auth/organizations'),
 };
+
+// 模型测试 API
+export const testResultsAPI = {
+  list: (params) => request.get('/test-results', { params }),
+  create: (data) => request.post('/test-results', data),
+  batchCreate: (data) => request.post('/test-results/batch', data),
+  update: (id, data) => request.put(`/test-results/${id}`, data),
+  delete: (id) => request.delete(`/test-results/${id}`),
+  batchDelete: (data) => request.post('/test-results/batch-delete', data),
+  deleteAll: () => request.post('/test-results/delete-all'),
+  export: (data) => request.post('/test-results/export', data, { responseType: 'blob' }),
+  runTest: (id, aiConfigId) => request.post('/test-results/run-test', { id, ai_config_id: aiConfigId }),
+  runBatchTest: (ids, aiConfigId) => request.post('/test-results/run-batch-test', { ids, ai_config_id: aiConfigId }),
+  importFromQuestions: (data) => request.post('/test-results/import-from-questions', data),
+  importPreview: (formData) => request.post('/test-results/import/preview', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  getTestTypes: () => request.get('/test-results/test-types'),
+  getResponseTypes: () => request.get('/test-results/response-types'),
+  getExistingQuestionIds: () => request.get('/test-results/existing-question-ids'),
+};
