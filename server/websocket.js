@@ -1,10 +1,7 @@
 const WebSocket = require('ws');
-const url = require('url');
 const db = require('./database/init');
-const { judgeResponseType } = require('./utils/ai');
 
 let wss = null;
-let wssTest = null; // 专用测试WebSocket服务器
 
 /**
  * 初始化 WebSocket 服务
@@ -12,9 +9,7 @@ let wssTest = null; // 专用测试WebSocket服务器
  */
 function initWebSocket(server) {
   wss = new WebSocket.Server({ server, path: '/ws/generate' });
-  wssTest = new WebSocket.Server({ server, path: '/ws/test' });
 
-  // 允许跨域连接
   wss.on('connection', (ws, req) => {
     console.log('[WS] 客户端连接 - 生成');
     ws.on('message', async (message) => {
@@ -22,6 +17,7 @@ function initWebSocket(server) {
         const data = JSON.parse(message.toString());
         await handleGenerateRequest(ws, data);
       } catch (err) {
+        console.error('[WS] 消息处理错误:', err.message);
         ws.send(JSON.stringify({ type: 'error', message: '请求格式错误' }));
       }
     });
@@ -29,21 +25,7 @@ function initWebSocket(server) {
     ws.on('close', () => console.log('[WS] 客户端断开 - 生成'));
   });
 
-  wssTest.on('connection', (ws, req) => {
-    console.log('[WS] 客户端连接 - 测试');
-    ws.on('message', async (message) => {
-      try {
-        const data = JSON.parse(message.toString());
-        await handleTestRequest(ws, data);
-      } catch (err) {
-        ws.send(JSON.stringify({ type: 'error', message: '请求格式错误' }));
-      }
-    });
-    ws.on('error', (err) => console.error('[WS] 测试错误:', err.message));
-    ws.on('close', () => console.log('[WS] 客户端断开 - 测试'));
-  });
-
-  console.log('[WS] WebSocket 服务已启动 (生成: /ws/generate, 测试: /ws/test)');
+  console.log('[WS] WebSocket 服务已启动 (生成: /ws/generate)');
   return wss;
 }
 
@@ -138,6 +120,11 @@ async function handleGenerateRequest(ws, data) {
         formatInstruction,
         systemPrompt
       );
+
+      // 为每个结果添加原始内容
+      for (const result of results) {
+        result.rawContent = content;
+      }
 
       // 按顺序推送每个结果
       for (let i = 0; i < results.length; i++) {
@@ -289,6 +276,12 @@ async function generateBatch(config, batchCount, type, category, is_refused, use
   // 解析批量生成结果
   const results = parseBatchContent(content, batchCount, type, category, is_refused);
   console.log(`[WS] 解析结果数量: ${results.length}`);
+
+  // 添加原始内容到每个结果
+  for (const result of results) {
+    result.rawContent = content;
+  }
+
   return results;
 }
 
@@ -369,6 +362,11 @@ function parseBatchContent(content, expectedCount, type, category, is_refused) {
       type,
       category
     });
+  }
+
+  // 为所有结果添加原始内容
+  for (const result of results) {
+    result.rawContent = content;
   }
 
   return results.slice(0, expectedCount);
@@ -540,163 +538,3 @@ async function nonStreamAIResponse(apiUrl, headers, body, protocol) {
 }
 
 module.exports = { initWebSocket };
-
-// ========== 测试请求处理 ==========
-
-/**
- * 处理测试请求 - 并发执行AI测试
- * @param {WebSocket} ws - WebSocket连接
- * @param {Object} data - 请求数据 { ids: number[], ai_config_id: number }
- */
-async function handleTestRequest(ws, data) {
-  const { ids = [], ai_config_id } = data;
-
-  if (!Array.isArray(ids) || ids.length === 0) {
-    ws.send(JSON.stringify({ type: 'error', message: '请选择要测试的记录' }));
-    ws.close();
-    return;
-  }
-
-  // 获取AI配置
-  let config;
-  if (ai_config_id) {
-    config = db.prepare('SELECT * FROM ai_config WHERE id = ?').get(ai_config_id);
-  }
-  if (!config) {
-    config = db.prepare('SELECT * FROM ai_config WHERE is_active = 1 LIMIT 1').get();
-  }
-  if (!config || !config.api_base_url || !config.api_key) {
-    ws.send(JSON.stringify({ type: 'error', message: '请先选择或配置AI渠道' }));
-    ws.close();
-    return;
-  }
-
-  console.log(`[WS-Test] 开始测试 ${ids.length} 条记录，使用渠道: ${config.name}`);
-
-  const totalCount = ids.length;
-  let completedCount = 0;
-  let successCount = 0;
-  let failedCount = 0;
-  const concurrency = 3; // 并发数
-
-  // 分批处理
-  const batches = [];
-  for (let i = 0; i < totalCount; i += concurrency) {
-    batches.push(ids.slice(i, i + concurrency));
-  }
-
-  const processItem = async (id) => {
-    const row = db.prepare('SELECT * FROM test_results WHERE id = ?').get(id);
-    if (!row) {
-      return { id, success: false, message: '记录不存在' };
-    }
-
-    const prompt = row.question;
-    const baseUrl = config.api_base_url.replace(/\/+$/, '');
-
-    try {
-      let aiAnswer = '';
-
-      if (config.protocol === 'gemini') {
-        const resp = await fetch(`${baseUrl}/models/${config.model}:generateContent?key=${config.api_key}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-          signal: AbortSignal.timeout(60000),
-        });
-        const respData = await resp.json();
-        aiAnswer = respData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      } else if (config.protocol === 'claude') {
-        const resp = await fetch(`${baseUrl}/messages`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': config.api_key,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model: config.model,
-            max_tokens: 4096,
-            messages: [{ role: 'user', content: prompt }],
-          }),
-          signal: AbortSignal.timeout(60000),
-        });
-        const respData = await resp.json();
-        aiAnswer = respData.content?.[0]?.text || '';
-      } else {
-        const resp = await fetch(`${baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${config.api_key}`,
-          },
-          body: JSON.stringify({
-            model: config.model,
-            messages: [{ role: 'user', content: prompt }],
-            max_tokens: 4096,
-          }),
-          signal: AbortSignal.timeout(60000),
-        });
-        const respData = await resp.json();
-        aiAnswer = respData.choices?.[0]?.message?.content || '';
-      }
-
-      const responseType = judgeResponseType(aiAnswer);
-
-      // 更新数据库
-      db.prepare(`
-        UPDATE test_results
-        SET generated_content = ?, response_type = ?, ai_config_id = ?, ai_config_name = ?, ai_model = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(aiAnswer, responseType, config.id, config.name, config.model, id);
-
-      return { id, success: true, response_type: responseType, generated_content: aiAnswer };
-    } catch (err) {
-      const responseType = judgeResponseType('');
-      db.prepare(`
-        UPDATE test_results
-        SET generated_content = ?, response_type = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(`AI调用失败: ${err.message}`, responseType, id);
-
-      return { id, success: false, message: err.message };
-    }
-  };
-
-  // 并发执行
-  for (const batch of batches) {
-    const results = await Promise.all(batch.map(id => processItem(id)));
-
-    for (const result of results) {
-      completedCount++;
-      if (result.success) {
-        successCount++;
-      } else {
-        failedCount++;
-      }
-
-      // 推送进度
-      ws.send(JSON.stringify({
-        type: 'progress',
-        id: result.id,
-        current: completedCount,
-        total: totalCount,
-        success: result.success,
-        response_type: result.response_type || null,
-        generated_content: result.generated_content || null,
-        message: result.message || null,
-      }));
-    }
-  }
-
-  // 推送完成
-  ws.send(JSON.stringify({
-    type: 'complete',
-    total: totalCount,
-    success: successCount,
-    failed: failedCount,
-  }));
-
-  console.log(`[WS-Test] 测试完成: ${successCount}/${totalCount} 成功`);
-  ws.close();
-}

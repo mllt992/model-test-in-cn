@@ -137,6 +137,7 @@
               <span v-else style="color: #bbb">-</span>
             </template>
             <template #action="{ row }">
+              <t-button variant="text" size="small" theme="primary" @click="handleViewRaw(row)">查看原文</t-button>
               <t-button variant="text" size="small" theme="primary" @click="handleRegenerateAnswer(row)" :loading="regeneratingAnswer[row.index]">重新生成</t-button>
               <t-button variant="text" size="small" theme="primary" @click="handleEdit(row)">编辑</t-button>
               <t-button variant="text" size="small" theme="danger" @click="handleDelete(row)">删除</t-button>
@@ -177,6 +178,20 @@
               <t-button variant="outline" @click="editDialogVisible = false" style="margin-left: 12px">取消</t-button>
             </t-form-item>
           </t-form>
+        </t-dialog>
+
+        <!-- 查看原文弹窗 -->
+        <t-dialog v-model:visible="rawContentDialogVisible" header="AI原始响应" :footer="false" width="700px">
+          <t-space direction="vertical" style="width: 100%" :size="16">
+            <t-alert theme="info">题目：{{ rawContentQuestion }}</t-alert>
+            <div>
+              <h4 style="margin-bottom: 8px">原始响应内容</h4>
+              <div class="raw-content-box">{{ rawContentText || '无原始内容' }}</div>
+            </div>
+            <div style="text-align: right">
+              <t-button variant="outline" @click="rawContentDialogVisible = false">关闭</t-button>
+            </div>
+          </t-space>
         </t-dialog>
 
         <!-- 重新生成回答弹窗 -->
@@ -299,6 +314,11 @@ const editForm = ref({ question: '', answer: '', type: '', category: '', is_refu
 const regenerateDialogVisible = ref(false);
 const regenerateForm = ref({ index: null, question: '', oldAnswer: '', newAnswer: '' });
 
+// 查看原文
+const rawContentDialogVisible = ref(false);
+const rawContentQuestion = ref('');
+const rawContentText = ref('');
+
 // 确认删除弹窗
 const confirmDialogVisible = ref(false);
 const confirmDialogText = ref('');
@@ -325,7 +345,7 @@ const columns = [
   { colKey: 'answer', title: '回答', width: 200, ellipsis: true, cell: 'answer-preview' },
   { colKey: 'is_refused', title: '是否拒答', width: 90, cell: 'is_refused' },
   { colKey: 'is_duplicate', title: '重复检测', width: 90, cell: 'is_duplicate' },
-  { colKey: 'action', title: '操作', width: 280, cell: 'action', fixed: 'right' },
+  { colKey: 'action', title: '操作', width: 340, cell: 'action', fixed: 'right' },
 ];
 
 // 加载AI配置、技能、类型和类别
@@ -391,10 +411,13 @@ const handleGenerate = async () => {
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsHost = window.location.host;
   const wsUrl = `${wsProtocol}//${wsHost}/ws/generate`;
+  console.log('[WS-Generate] 连接:', wsUrl);
+  console.log('[WS-Generate] protocol:', wsProtocol, 'host:', wsHost);
 
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
+    console.log('[WS-Generate] 连接成功');
     const sendData = {
       count: config.count,
       type: config.type,
@@ -411,6 +434,7 @@ const handleGenerate = async () => {
   };
 
   ws.onmessage = (event) => {
+    console.log('[WS-Generate] 收到消息:', event.data);
     try {
       const data = JSON.parse(event.data);
 
@@ -444,10 +468,11 @@ const handleGenerate = async () => {
   ws.onerror = (error) => {
     console.error('WebSocket 错误:', error);
     generating.value = false;
-    MessagePlugin.error('WebSocket 连接错误');
+    MessagePlugin.error('WebSocket 连接错误，请检查服务器是否启动');
   };
 
-  ws.onclose = () => {
+  ws.onclose = (event) => {
+    console.log('[WS-Generate] 连接关闭:', event.code, event.reason);
     generating.value = false;
     generatingProgress.value = { current: 0, total: 0 };
   };
@@ -482,6 +507,13 @@ const handleEditSubmit = async ({ validateResult }) => {
   MessagePlugin.success('保存成功');
 };
 
+// 查看原文
+const handleViewRaw = (row) => {
+  rawContentQuestion.value = row.question;
+  rawContentText.value = row.rawContent || '无原始内容';
+  rawContentDialogVisible.value = true;
+};
+
 // 重新生成回答
 const handleRegenerateAnswer = async (row) => {
   regenerateForm.value = {
@@ -495,10 +527,12 @@ const handleRegenerateAnswer = async (row) => {
 
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${wsProtocol}//${window.location.host}/ws/generate`;
+  console.log('[WS-Regenerate] 连接:', wsUrl);
 
   const regWs = new WebSocket(wsUrl);
 
   regWs.onopen = () => {
+    console.log('[WS-Regenerate] 连接成功');
     regWs.send(JSON.stringify({
       count: 1,
       type: row.type || config.type,
@@ -511,6 +545,7 @@ const handleRegenerateAnswer = async (row) => {
   };
 
   regWs.onmessage = (event) => {
+    console.log('[WS-Regenerate] 收到消息:', event.data);
     try {
       const data = JSON.parse(event.data);
       if (data.type === 'progress') {
@@ -528,9 +563,14 @@ const handleRegenerateAnswer = async (row) => {
     }
   };
 
-  regWs.onerror = () => {
-    regenerateForm.value.newAnswer = 'WebSocket连接错误';
+  regWs.onerror = (error) => {
+    console.error('[WS-Regenerate] 错误:', error);
+    regenerateForm.value.newAnswer = 'WebSocket连接错误，请检查服务器是否启动';
     regeneratingAnswer.value[row.index] = false;
+  };
+
+  regWs.onclose = (event) => {
+    console.log('[WS-Regenerate] 连接关闭:', event.code, event.reason);
   };
 };
 
@@ -808,6 +848,19 @@ watch(config, () => {
 .ai-answer-box.ai-answer-new {
   border-color: #0052d9;
   background: #f0f5ff;
+}
+
+.raw-content-box {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 4px;
+  padding: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .last-prompt {
