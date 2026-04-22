@@ -1,5 +1,6 @@
 const WebSocket = require('ws');
 const db = require('./database/init');
+const { judgeResponseType } = require('./utils/ai');
 
 let wss = null;
 
@@ -8,25 +9,55 @@ let wss = null;
  * @param {http.Server} server - HTTP 服务器实例
  */
 function initWebSocket(server) {
-  wss = new WebSocket.Server({ server, path: '/ws/generate' });
+  // 使用单一 WebSocket.Server，根据路径路由
+  wss = new WebSocket.Server({ server });
 
   wss.on('connection', (ws, req) => {
-    console.log('[WS] 客户端连接 - 生成');
-    ws.on('message', async (message) => {
-      try {
-        const data = JSON.parse(message.toString());
-        await handleGenerateRequest(ws, data);
-      } catch (err) {
-        console.error('[WS] 消息处理错误:', err.message);
-        ws.send(JSON.stringify({ type: 'error', message: '请求格式错误' }));
-      }
-    });
-    ws.on('error', (err) => console.error('[WS] 错误:', err.message));
-    ws.on('close', () => console.log('[WS] 客户端断开 - 生成'));
+    const url = req.url || '';
+    console.log('[WS] 客户端连接:', url);
+
+    if (url.startsWith('/ws/generate')) {
+      handleGenerateWS(ws);
+    } else if (url.startsWith('/ws/test')) {
+      handleTestWS(ws);
+    } else {
+      console.log('[WS] 未知路径:', url);
+      ws.close();
+    }
   });
 
-  console.log('[WS] WebSocket 服务已启动 (生成: /ws/generate)');
+  console.log('[WS] WebSocket 服务已启动');
   return wss;
+}
+
+// ========== 题目生成 WebSocket ==========
+function handleGenerateWS(ws) {
+  ws.on('message', async (message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      await handleGenerateRequest(ws, data);
+    } catch (err) {
+      console.error('[WS-Generate] 消息处理错误:', err.message);
+      ws.send(JSON.stringify({ type: 'error', message: '请求格式错误' }));
+    }
+  });
+  ws.on('error', (err) => console.error('[WS-Generate] 错误:', err.message));
+  ws.on('close', () => console.log('[WS-Generate] 客户端断开'));
+}
+
+// ========== 模型测试 WebSocket ==========
+function handleTestWS(ws) {
+  ws.on('message', async (message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      await handleTestRequest(ws, data);
+    } catch (err) {
+      console.error('[WS-Test] 消息处理错误:', err.message);
+      ws.send(JSON.stringify({ type: 'error', message: '请求格式错误' }));
+    }
+  });
+  ws.on('error', (err) => console.error('[WS-Test] 错误:', err.message));
+  ws.on('close', () => console.log('[WS-Test] 客户端断开'));
 }
 
 // 并发控制参数
@@ -574,6 +605,146 @@ async function nonStreamAIResponse(apiUrl, headers, body, protocol) {
   }
 
   return content;
+}
+
+/**
+ * 处理模型测试请求（WebSocket批量测试）
+ */
+async function handleTestRequest(ws, data) {
+  const { ids = [], ai_config_id } = data;
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    ws.send(JSON.stringify({ type: 'error', message: '请选择要测试的记录' }));
+    ws.close();
+    return;
+  }
+
+  // 获取AI配置
+  let aiConfig = null;
+  if (ai_config_id) {
+    aiConfig = db.prepare('SELECT * FROM ai_config WHERE id = ?').get(ai_config_id);
+  }
+  if (!aiConfig) {
+    aiConfig = db.prepare('SELECT * FROM ai_config WHERE is_active = 1 LIMIT 1').get();
+  }
+  if (!aiConfig || !aiConfig.api_base_url || !aiConfig.api_key) {
+    ws.send(JSON.stringify({ type: 'error', message: '请先选择或配置AI渠道' }));
+    ws.close();
+    return;
+  }
+
+  console.log('[WS-Test] 使用配置:', aiConfig.name, aiConfig.protocol, aiConfig.model);
+  console.log('[WS-Test] 测试数量:', ids.length);
+
+  const baseUrl = aiConfig.api_base_url.replace(/\/+$/, '');
+  let completedCount = 0;
+  let successCount = 0;
+
+  // 串行执行每个测试
+  for (const id of ids) {
+    const row = db.prepare('SELECT * FROM test_results WHERE id = ?').get(id);
+    if (!row) {
+      completedCount++;
+      ws.send(JSON.stringify({
+        type: 'progress',
+        current: completedCount,
+        total: ids.length,
+        id,
+        success: false,
+        message: '记录不存在',
+      }));
+      continue;
+    }
+
+    const prompt = row.question;
+    let aiAnswer = '';
+    let success = false;
+
+    try {
+      if (aiConfig.protocol === 'gemini') {
+        const resp = await fetch(`${baseUrl}/models/${aiConfig.model}:generateContent?key=${aiConfig.api_key}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const result = await resp.json();
+        aiAnswer = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      } else if (aiConfig.protocol === 'claude') {
+        const resp = await fetch(`${baseUrl}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': aiConfig.api_key,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: aiConfig.model,
+            max_tokens: 4096,
+            messages: [{ role: 'user', content: prompt }],
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const result = await resp.json();
+        aiAnswer = result.content?.[0]?.text || '';
+      } else {
+        const resp = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${aiConfig.api_key}`,
+          },
+          body: JSON.stringify({
+            model: aiConfig.model,
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: 4096,
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const result = await resp.json();
+        aiAnswer = result.choices?.[0]?.message?.content || '';
+      }
+
+      success = true;
+      successCount++;
+    } catch (err) {
+      aiAnswer = `AI调用失败: ${err.message}`;
+    }
+
+    // 自动判断回答类型
+    const responseType = judgeResponseType(aiAnswer);
+
+    // 更新数据库
+    db.prepare(`
+      UPDATE test_results
+      SET generated_content = ?, response_type = ?, ai_config_id = ?, ai_config_name = ?, ai_model = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(aiAnswer, responseType, aiConfig.id, aiConfig.name, aiConfig.model, id);
+
+    completedCount++;
+    ws.send(JSON.stringify({
+      type: 'progress',
+      current: completedCount,
+      total: ids.length,
+      id,
+      success,
+      generated_content: aiAnswer,
+      response_type: responseType,
+    }));
+
+    // 添加延迟避免API限流
+    if (completedCount < ids.length) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+
+  console.log('[WS-Test] 测试完成:', successCount, '/', ids.length);
+  ws.send(JSON.stringify({
+    type: 'complete',
+    total: ids.length,
+    success: successCount,
+  }));
+  ws.close();
 }
 
 module.exports = { initWebSocket };
