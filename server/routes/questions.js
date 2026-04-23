@@ -285,14 +285,8 @@ router.post('/:id/ai-answer', async (req, res) => {
     return res.status(400).json({ code: 400, message: '请先配置AI渠道' });
   }
 
-  // 构建提示词
-  const skills = db.prepare("SELECT * FROM ai_skills WHERE enabled = 1 ORDER BY sort_order ASC").all();
-  const skillText = skills.map((s) => s.content).filter(Boolean).join('\n');
-  let prompt = row.question;
-  if (aiConfig.agent_prompt) prompt = aiConfig.agent_prompt + '\n' + prompt;
-  if (aiConfig.rules) prompt += '\n规则：' + aiConfig.rules;
-  if (skillText) prompt += '\n技能：' + skillText;
-
+  // 直接将题目作为用户消息发送
+  const prompt = row.question;
   const baseUrl = aiConfig.api_base_url.replace(/\/+$/, '');
 
   try {
