@@ -20,6 +20,8 @@ function initWebSocket(server) {
       handleGenerateWS(ws);
     } else if (url.startsWith('/ws/test')) {
       handleTestWS(ws);
+    } else if (url.startsWith('/ws/reanswer')) {
+      handleReanswerWS(ws);
     } else {
       console.log('[WS] 未知路径:', url);
       ws.close();
@@ -758,6 +760,122 @@ async function handleTestRequest(ws, data) {
     total: ids.length,
     success: successCount,
   }));
+  ws.close();
+}
+
+// ========== 批量重新回答 WebSocket ==========
+function handleReanswerWS(ws) {
+  ws.on('message', async (message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      await handleReanswerRequest(ws, data);
+    } catch (err) {
+      console.error('[WS-Reanswer] 消息处理错误:', err.message);
+      ws.send(JSON.stringify({ type: 'error', message: '请求格式错误' }));
+    }
+  });
+  ws.on('error', (err) => console.error('[WS-Reanswer] 错误:', err.message));
+  ws.on('close', () => console.log('[WS-Reanswer] 客户端断开'));
+}
+
+async function handleReanswerRequest(ws, data) {
+  const { ids = [], concurrency = 1 } = data;
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    ws.send(JSON.stringify({ type: 'error', message: '请选择要回答的记录' }));
+    ws.close();
+    return;
+  }
+
+  const aiConfig = db.prepare('SELECT * FROM ai_config WHERE is_active = 1 LIMIT 1').get();
+  if (!aiConfig || !aiConfig.api_base_url || !aiConfig.api_key) {
+    ws.send(JSON.stringify({ type: 'error', message: '请先配置AI渠道' }));
+    ws.close();
+    return;
+  }
+
+  const baseUrl = aiConfig.api_base_url.replace(/\/+$/, '');
+  const conc = Math.min(Math.max(1, Number(concurrency)), 5);
+  let completedCount = 0;
+  let successCount = 0;
+
+  const executeOne = async (id) => {
+    const row = db.prepare('SELECT * FROM questions WHERE id = ?').get(id);
+    if (!row) return { id, success: false, message: '记录不存在' };
+
+    let aiAnswer = '';
+    try {
+      if (aiConfig.protocol === 'gemini') {
+        const resp = await fetch(`${baseUrl}/models/${aiConfig.model}:generateContent?key=${aiConfig.api_key}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: row.question }] }] }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const result = await resp.json();
+        aiAnswer = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      } else if (aiConfig.protocol === 'claude') {
+        const resp = await fetch(`${baseUrl}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': aiConfig.api_key,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: aiConfig.model,
+            max_tokens: 4096,
+            messages: [{ role: 'user', content: row.question }],
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const result = await resp.json();
+        aiAnswer = result.content?.[0]?.text || '';
+      } else {
+        const resp = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${aiConfig.api_key}`,
+          },
+          body: JSON.stringify({
+            model: aiConfig.model,
+            messages: [{ role: 'user', content: row.question }],
+            max_tokens: 4096,
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const result = await resp.json();
+        aiAnswer = result.choices?.[0]?.message?.content || '';
+      }
+
+      if (!aiAnswer) return { id, success: false, message: '模型返回为空' };
+
+      db.prepare('UPDATE questions SET model_answer = ?, is_answered = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(aiAnswer, id);
+      successCount++;
+      return { id, success: true };
+    } catch (err) {
+      return { id, success: false, message: err.message };
+    }
+  };
+
+  const total = ids.length;
+  const batches = [];
+  for (let i = 0; i < ids.length; i += conc) {
+    batches.push(ids.slice(i, i + conc));
+  }
+
+  for (const batch of batches) {
+    const batchResults = await Promise.all(batch.map(id => executeOne(id)));
+    for (const result of batchResults) {
+      completedCount++;
+      ws.send(JSON.stringify({ type: 'progress', current: completedCount, total, ...result }));
+    }
+  }
+
+  console.log('[WS-Reanswer] 完成:', successCount, '/', total);
+  ws.send(JSON.stringify({ type: 'complete', total, success: successCount }));
   ws.close();
 }
 

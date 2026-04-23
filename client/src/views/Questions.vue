@@ -58,6 +58,10 @@
         <template #icon><t-icon name="edit" /></template>
         批量设置类别 ({{ selectedRows.length }})
       </t-button>
+      <t-button v-if="selectedRows.length" variant="outline" @click="handleBatchAIAnswer" :loading="batchAIAnswerLoading">
+        <template #icon><t-icon name="refresh" /></template>
+        {{ batchAIAnswerLoading && batchReanswerProgress.total ? `回答中 ${batchReanswerProgress.current}/${batchReanswerProgress.total}` : `批量重新回答 (${selectedRows.length})` }}
+      </t-button>
 
       <!-- 拒答比例（右侧） -->
       <div class="refuse-rate">
@@ -91,8 +95,8 @@
       <template #index="{ row }">{{ row.index }}</template>
       <template #type="{ row }">{{ row.type || '-' }}</template>
       <template #is_answered="{ row }">
-        <t-tag :theme="row.is_answered === 1 ? 'success' : 'default'" variant="outline">
-          {{ row.is_answered === 1 ? '是' : '否' }}
+        <t-tag :theme="row.model_answer ? 'success' : 'default'" variant="outline">
+          {{ row.model_answer ? '是' : '否' }}
         </t-tag>
       </template>
       <template #is_refused="{ row }">
@@ -578,6 +582,7 @@ const aiAnswerDialogVisible = ref(false);
 const aiAnswerLoading = ref({});
 const aiAnswerData = ref({ ai_answer: '', old_answer: '' });
 const aiAnswerRowId = ref(null);
+const batchAIAnswerLoading = ref(false);
 
 // 查看原始内容
 const viewOriginalDialogVisible = ref(false);
@@ -604,6 +609,7 @@ const handleReplaceAnswer = async () => {
   try {
     await questionsAPI.update(aiAnswerRowId.value, {
       model_answer: aiAnswerData.value.ai_answer,
+      is_answered: 1,
       updater_id: user.id,
     });
     MessagePlugin.success('替换成功');
@@ -802,7 +808,7 @@ const handleSubmit = async ({ validateResult }) => {
   if (validateResult !== true) return;
   const payload = {
     ...form.value,
-    is_answered: Number(form.value.is_answered),
+    is_answered: form.value.model_answer ? Number(form.value.is_answered) : 0,
     is_refused: Number(form.value.is_refused),
   };
   try {
@@ -902,6 +908,34 @@ const handleBatchCategorySubmit = async () => {
   } catch (e) {
     MessagePlugin.error('设置失败');
   }
+};
+
+// 批量重新回答
+const batchReanswerProgress = ref({ current: 0, total: 0 });
+const batchReanswerWs = ref(null);
+
+const handleBatchAIAnswer = () => {
+  if (!selectedRows.value.length) return;
+  batchAIAnswerLoading.value = true;
+  batchReanswerProgress.value = { current: 0, total: selectedRows.value.length };
+
+  batchReanswerWs.value = questionsAPI.runBatchReanswerWebSocket(
+    selectedRows.value,
+    3,
+    (progress) => {
+      batchReanswerProgress.value = { current: progress.current, total: progress.total };
+    },
+    (result) => {
+      batchAIAnswerLoading.value = false;
+      MessagePlugin.success(`批量重新回答完成，成功 ${result.success}/${result.total} 条`);
+      selectedRows.value = [];
+      loadData();
+    },
+    (error) => {
+      batchAIAnswerLoading.value = false;
+      MessagePlugin.error(error.message || '批量回答失败');
+    }
+  );
 };
 
 // 导入

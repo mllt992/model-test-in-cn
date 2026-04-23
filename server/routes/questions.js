@@ -46,8 +46,11 @@ router.get('/', (req, res) => {
     params.push(category.trim());
   }
   if (is_answered !== undefined && is_answered !== '-1' && is_answered !== '') {
-    conditions.push('q.is_answered = ?');
-    params.push(Number(is_answered));
+    if (Number(is_answered) === 1) {
+      conditions.push("q.model_answer IS NOT NULL AND TRIM(q.model_answer) != ''");
+    } else {
+      conditions.push("(q.model_answer IS NULL OR TRIM(q.model_answer) = '')");
+    }
   }
   if (is_refused !== undefined && is_refused !== '-1' && is_refused !== '') {
     conditions.push('q.is_refused = ?');
@@ -274,6 +277,93 @@ router.post('/batch-update-category', (req, res) => {
   res.json({ code: 200, message: `成功更新 ${ids.length} 条记录的类别` });
 });
 
+// 批量AI回答（替换原回答）—— 必须在 /:id/ai-answer 之前注册
+router.post('/batch-ai-answer', async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ code: 400, message: '请选择要回答的记录' });
+  }
+
+  const aiConfig = db.prepare('SELECT * FROM ai_config WHERE is_active = 1 LIMIT 1').get();
+  if (!aiConfig || !aiConfig.api_base_url || !aiConfig.api_key) {
+    return res.status(400).json({ code: 400, message: '请先配置AI渠道' });
+  }
+
+  const baseUrl = aiConfig.api_base_url.replace(/\/+$/, '');
+  let success = 0;
+  const errors = [];
+
+  for (const id of ids) {
+    const row = db.prepare('SELECT * FROM questions WHERE id = ?').get(id);
+    if (!row) { errors.push({ id, error: '记录不存在' }); continue; }
+
+    try {
+      let aiAnswer = '';
+
+      if (aiConfig.protocol === 'gemini') {
+        const resp = await fetch(`${baseUrl}/models/${aiConfig.model}:generateContent?key=${aiConfig.api_key}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: row.question }] }] }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const data = await resp.json();
+        aiAnswer = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      } else if (aiConfig.protocol === 'claude') {
+        const resp = await fetch(`${baseUrl}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': aiConfig.api_key,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: aiConfig.model,
+            max_tokens: 4096,
+            messages: [{ role: 'user', content: row.question }],
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const data = await resp.json();
+        aiAnswer = data.content?.[0]?.text || '';
+      } else {
+        const resp = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${aiConfig.api_key}`,
+          },
+          body: JSON.stringify({
+            model: aiConfig.model,
+            messages: [{ role: 'user', content: row.question }],
+            max_tokens: 4096,
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const data = await resp.json();
+        aiAnswer = data.choices?.[0]?.message?.content || '';
+      }
+
+      if (!aiAnswer) {
+        errors.push({ id, error: '模型返回为空' });
+        continue;
+      }
+
+      db.prepare('UPDATE questions SET model_answer = ?, is_answered = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(aiAnswer, id);
+      success++;
+    } catch (err) {
+      errors.push({ id, error: err.message });
+    }
+  }
+
+  res.json({
+    code: 200,
+    data: { success, errors, total: ids.length },
+    message: `批量回答完成，成功 ${success}/${ids.length} 条${errors.length ? `，失败 ${errors.length} 条` : ''}`,
+  });
+});
+
 // AI回答：根据活跃AI配置调用模型生成回答
 router.post('/:id/ai-answer', async (req, res) => {
   const { id } = req.params;
@@ -341,11 +431,17 @@ router.post('/:id/ai-answer', async (req, res) => {
       return res.status(500).json({ code: 500, message: '模型返回为空' });
     }
 
+    // AI回答成功，自动更新 is_answered = 1
+    db.prepare('UPDATE questions SET model_answer = ?, is_answered = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(aiAnswer, row.id);
+
     res.json({ code: 200, data: { ai_answer: aiAnswer, old_answer: row.model_answer || '' } });
   } catch (err) {
     res.status(500).json({ code: 500, message: 'AI调用失败: ' + err.message });
   }
 });
+
+// 同意审核
 
 // 同意审核
 router.post('/:id/approve', (req, res) => {
@@ -455,8 +551,11 @@ router.post('/export', (req, res) => {
     params.push(category.trim());
   }
   if (is_answered !== undefined && is_answered !== '-1' && is_answered !== '') {
-    conditions.push('q.is_answered = ?');
-    params.push(Number(is_answered));
+    if (Number(is_answered) === 1) {
+      conditions.push("q.model_answer IS NOT NULL AND TRIM(q.model_answer) != ''");
+    } else {
+      conditions.push("(q.model_answer IS NULL OR TRIM(q.model_answer) = '')");
+    }
   }
   if (is_refused !== undefined && is_refused !== '-1' && is_refused !== '') {
     conditions.push('q.is_refused = ?');

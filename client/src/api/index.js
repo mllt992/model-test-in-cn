@@ -25,6 +25,50 @@ export const questionsAPI = {
   importFile: (formData) => request.post('/questions/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
   importPreview: (formData) => request.post('/questions/import/preview', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
   aiAnswer: (id) => request.post(`/questions/${id}/ai-answer`),
+  batchAiAnswer: (ids) => request.post('/questions/batch-ai-answer', { ids }),
+
+  /**
+   * WebSocket批量重新回答（带实时进度）
+   */
+  runBatchReanswerWebSocket(ids, concurrency, onProgress, onComplete, onError) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/reanswer`;
+    const ws = new WebSocket(wsUrl);
+
+    const cleanup = () => {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+    };
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ ids, concurrency }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'progress') {
+          onProgress && onProgress(data);
+        } else if (data.type === 'complete') {
+          onComplete && onComplete(data);
+          cleanup();
+        } else if (data.type === 'error') {
+          onError && onError(new Error(data.message));
+          cleanup();
+        }
+      } catch (e) {
+        onError && onError(e);
+      }
+    };
+
+    ws.onerror = () => {
+      onError && onError(new Error('WebSocket连接失败'));
+    };
+
+    return ws;
+  },
+
   approve: (id, username) => request.post(`/questions/${id}/approve`, { username }),
   revokeApprove: (id, username) => request.post(`/questions/${id}/revoke-approve`, { username }),
   getDuplicates: () => request.get('/questions/duplicates'),
@@ -34,11 +78,7 @@ export const questionsAPI = {
 };
 
 export const statsAPI = {
-  categoryDistribution: () => request.get('/stats/category-distribution'),
-  typeDistribution: () => request.get('/stats/type-distribution'),
-  categoryRejection: () => request.get('/stats/category-rejection'),
-  questionWordcloud: () => request.get('/stats/question-wordcloud'),
-  answerWordcloud: () => request.get('/stats/answer-wordcloud'),
+  getAll: () => request.get('/stats/all'),
 };
 
 export const aiConfigAPI = {
