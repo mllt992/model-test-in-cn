@@ -655,7 +655,18 @@ router.post('/import', upload.single('file'), (req, res) => {
         return record;
       });
     } else {
+      // JSON 格式：应用用户选择的字段映射
       records = Array.isArray(rawData) ? rawData : [rawData];
+      // 应用用户选择的字段映射
+      records = records.map((r) => {
+        const record = {};
+        Object.entries(r).forEach(([k, v]) => {
+          // 先查 fieldMapping（键可能是原始列名），再查映射值
+          const mappedKey = mapping[k] || k;
+          if (mappedKey) record[mappedKey] = v;
+        });
+        return record;
+      });
       // 应用默认值
       Object.keys(defaults).forEach((field) => {
         records.forEach((r) => {

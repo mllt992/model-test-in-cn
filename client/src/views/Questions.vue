@@ -452,6 +452,7 @@ const systemFields = [
   { value: 'is_refused', label: '是否拒答(0/1)' },
   { value: 'remark', label: '备注' },
   { value: 'creator_id', label: '创建人(用户名)' },
+  { value: 'response', label: '模型回答(response)' },
 ];
 const defaultValues = ref({ is_answered: '-1', is_refused: '0' });
 
@@ -955,13 +956,22 @@ const autoMapFields = () => {
   // 自动映射规则：列名包含系统字段的 label 或 value 时自动匹配
   const mapping = {};
   headers.forEach((header) => {
-    const h = header.toLowerCase();
+    const h = header.toLowerCase().trim();  // 统一 trim 处理
     for (const sf of systemFields) {
       const labelMatch = sf.label.toLowerCase().replace(/[()（）/]/g, '');
       const valueMatch = sf.value.toLowerCase();
-      if (h.includes(valueMatch) || h.includes(labelMatch) || h === sf.value || h === sf.label) {
-        mapping[header] = sf.value;
+      // 精确匹配或包含匹配
+      if (h === valueMatch || h === labelMatch || h.includes(valueMatch) || h.includes(labelMatch)) {
+        mapping[header.trim()] = sf.value;  // 键也 trim，保持与后端一致
         break;
+      }
+    }
+    // 额外的智能映射：识别常见字段名模式
+    if (!mapping[header.trim()]) {
+      if (h.includes('response') || h.includes('best_answer') || h === 'answer') {
+        mapping[header.trim()] = 'model_answer';
+      } else if (h.includes('question') && !h.includes('id')) {
+        mapping[header.trim()] = 'question';
       }
     }
   });
@@ -984,7 +994,12 @@ const handleParseImport = async () => {
     const file = uploadFiles.value[0].raw;
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('fieldMapping', JSON.stringify(fieldMapping.value));
+    // 规范化 fieldMapping 的键（trim 处理，避免列名含空格导致匹配失败）
+    const normalizedMapping = {};
+    Object.entries(fieldMapping.value).forEach(([k, v]) => {
+      if (v) normalizedMapping[k.trim()] = v;
+    });
+    formData.append('fieldMapping', JSON.stringify(normalizedMapping));
     formData.append('defaultValues', JSON.stringify(defaultValues.value));
     if (selectedSheet.value) {
       formData.append('sheetName', selectedSheet.value);
